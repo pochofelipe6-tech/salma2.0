@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useMemo,useRef,useState,type FormEvent} from 'react';
-import {ShieldCheck,MapPin,Navigation,Play,Square,LogOut,Car,Clock3,Route,Gauge,Volume2,Check,LoaderCircle,X,LocateFixed,AlertTriangle} from 'lucide-react';
+import {ShieldCheck,MapPin,Navigation,Play,Square,LogOut,Car,Clock3,Route,Gauge,Volume2,Check,LoaderCircle,X,LocateFixed,AlertTriangle,CalendarDays} from 'lucide-react';
 import RouteMap from './route-map';
 import {routeApi,routeZones,routeDistance,type DriverData,type DriverTrip,type RoutePoint} from '../lib/route-types';
 import styles from './driver-screen.module.css';
@@ -115,9 +115,9 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   const openSetup=()=>{setError('');setNewVehicle(!vehicles.length);if(vehicles.length)setVehicle(String(vehicles[0].id));setup.current?.showModal()};
 
   return <div className={styles.screen}>
-    <header className={styles.header}><a href="/" className={styles.brand}><ShieldCheck/><span>Seguimiento<br/>de Ruta</span><b>SST</b></a><div className={styles.headerRight}><span className={styles.driverBadge}><ShieldCheck size={14}/> Conductor</span><span className={styles.userName}>{data.user.name}</span><div className={styles.avatar}>{data.user.name.slice(0,1).toUpperCase()}</div><button className={styles.logout} disabled={tracking||busy} aria-label="Cerrar sesión" title={tracking?'Finaliza tu ruta antes de salir':'Cerrar sesión'} onClick={()=>void onLogout().catch(()=>setError('No se pudo cerrar la sesión.'))}><LogOut size={18}/></button></div></header>
+    <header className={styles.header}><a href="/" className={styles.brand}><ShieldCheck/><span>Seguimiento<br/>de Ruta</span><b>SST</b></a><div className={styles.headerRight}><span className={styles.driverBadge}><Car size={16}/> Conductor</span><span className={styles.userName}>{data.user.name}</span><div className={styles.avatar}>{data.user.name.slice(0,1).toUpperCase()}</div><button className={styles.logout} disabled={tracking||busy} aria-label="Cerrar sesión" title={tracking?'Finaliza tu ruta antes de salir':'Cerrar sesión'} onClick={()=>void onLogout().catch(()=>setError('No se pudo cerrar la sesión.'))}><LogOut size={18}/></button></div></header>
     <main className={styles.content}>
-      <div className={styles.welcome}><div><span className={styles.eyebrow}>TU SEGURIDAD ES EL CAMINO</span><h1>Hola, {data.user.name.split(' ')[0]}<span> 👋</span></h1><p>{tracking?'Vamos contigo. Conduce con calma y mantén la app abierta.':'Un nuevo recorrido, la misma prioridad: llegar seguro.'}</p></div><span className={styles.date}>{new Date(now).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div className={styles.welcome}><div><span className={styles.eyebrow}>TU SEGURIDAD ES EL CAMINO</span><h1>Hola, {data.user.name.split(' ')[0]}<span> 👋</span></h1><p>{tracking?'Vamos contigo. Conduce con calma y mantén la app abierta.':'Un nuevo recorrido, la misma prioridad: llegar seguro.'}</p></div><span className={styles.date}><CalendarDays size={19}/>{new Date(now).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})}</span></div>
       {error&&!setup.current?.open&&<div className={styles.error} role="alert"><AlertTriangle size={18}/>{error}<button onClick={()=>setError('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
       {saveError&&<div className={styles.warning} role="status">{saveError}</div>}
       {finished&&<div className={styles.success} role="status"><Check size={18}/>Ruta finalizada. Tu viaje y las posiciones guardadas están en Supabase.</div>}
@@ -133,7 +133,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
           <div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>
-      <section className={styles.limits} aria-labelledby="limits-title"><div className={styles.sectionTitle}><h2 id="limits-title">Límites que protegen</h2><span>Protocolo preventivo SST</span></div><div className={styles.limitGrid}>{routeZones.map(z=><div key={z.id} className={styles.limitCard+' '+(trip?.zone===z.id?styles.currentLimit:'')}><span className={styles.zoneIcon}>{z.icon}</span><div><h3>{z.name}</h3><b>{z.limit}<small> km/h</small></b></div>{trip?.zone===z.id?<span className={styles.zoneTag}>Tu zona actual</span>:<span className={styles.zoneTag}>Límite preventivo</span>}</div>)}</div><p className={styles.limitNote}><Volume2 size={14}/>Alerta sonora al superar el límite de la zona seleccionada. Elige la zona antes de salir.</p></section>
+      <section className={styles.limits} aria-labelledby="limits-title"><div className={styles.sectionTitle}><h2 id="limits-title"><ShieldCheck size={25}/>Límites que protegen</h2><span>Protocolo preventivo SST</span></div><div className={styles.limitGrid}>{routeZones.map(z=><div key={z.id} data-zone={z.id} className={styles.limitCard+' '+(trip?.zone===z.id?styles.currentLimit:'')}><span className={styles.zoneIcon}>{z.icon}</span><div><h3>{z.name}</h3><b>{z.limit}<small> km/h</small></b></div>{trip?.zone===z.id?<span className={styles.zoneTag}>Tu zona actual</span>:<span className={styles.zoneTag}>Límite preventivo</span>}</div>)}</div><p className={styles.limitNote}><Volume2 size={14}/>Alerta sonora al superar el límite de la zona seleccionada. Elige la zona antes de salir.</p></section>
       <footer className={styles.footer}><ShieldCheck size={14}/>Cada kilómetro seguro cuenta.<span>GPS con la app abierta · Zonas seleccionadas manualmente</span></footer>
     </main>
     <dialog ref={setup} className={styles.setup} aria-labelledby="setup-title" onCancel={e=>{if(busy)e.preventDefault()}}>
