@@ -36,12 +36,12 @@ export default function RouteMap({points,position,tracking,stale}:{points:RouteP
     if(p){
       marker.current?.setLatLng([p.lat,p.lng]).setStyle({fillColor:stale?'#8b9bb0':'#1167e9'}).addTo(m);
       accuracy.current?.setLatLng([p.lat,p.lng]).setRadius(p.accuracy).addTo(m);
-      if(follow)m.setView([p.lat,p.lng],Math.max(m.getZoom(),16),{animate:false});
+      if(follow){if(p.accuracy>60&&accuracy.current)m.fitBounds(accuracy.current.getBounds(),{padding:[35,35],maxZoom:16,animate:false});else m.setView([p.lat,p.lng],16,{animate:false})}
     }
   },[points,position,ready,follow,stale]);
   return <div className={styles.mapFrame}>
     <div ref={container} className={styles.mapCanvas} role="img" aria-label="Mapa del recorrido GPS" data-points={points.length}/>
-    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(stale?'Última ubicación conocida':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
+    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
     <button className={styles.recenter} aria-label="Centrar en mi ubicación" disabled={!position&&!points.length} onClick={()=>setFollow(true)}><LocateFixed size={19}/></button>
     {!position&&!points.length&&<div className={styles.mapPlaceholder}><span><MapPin size={26}/></span><b>Tu próximo camino empieza aquí</b><p>Inicia tu ruta y permite el GPS para ver<br/>tu ubicación y el recorrido en el mapa.</p></div>}
     {tilesError&&<div className={styles.mapWarning} role="status">No se pudo cargar el mapa base. Revisa tu conexión; el GPS puede seguir registrando el recorrido.</div>}

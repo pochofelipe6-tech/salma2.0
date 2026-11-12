@@ -4,23 +4,23 @@ const user={id:'11111111-1111-4111-8111-111111111111',name:'Andrea Pérez',email
 const vehicle={id:1,user_id:user.id,plate:'ABC123',model:'Renault Duster',driver:user.name};
 type GPSWindow=Window&{sendGps:(lat:number,lng:number,speed:number)=>void};
 
-async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false}={}){
+async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8}={}){
   let vehicles=hasVehicle?[vehicle]:[];
   let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
   const saved:Record<string,unknown>[]=[];
   const events:Record<string,unknown>[]=[];
   let starts=0;
-  await page.addInitScript(({denied})=>{
+  await page.addInitScript(({denied,accuracy})=>{
     let listener:PositionCallback|undefined;
     let time=Date.now();
-    const position=(lat=4.65,lng=-74.08,speed=0)=>({coords:{latitude:lat,longitude:lng,accuracy:8,speed,altitude:null,altitudeAccuracy:null,heading:null,toJSON:()=>({})},timestamp:time,toJSON:()=>({})}) as GeolocationPosition;
+    const position=(lat=4.65,lng=-74.08,speed=0)=>({coords:{latitude:lat,longitude:lng,accuracy,speed,altitude:null,altitudeAccuracy:null,heading:null,toJSON:()=>({})},timestamp:time,toJSON:()=>({})}) as GeolocationPosition;
     Object.defineProperty(navigator,'geolocation',{configurable:true,value:{
       getCurrentPosition:(success:PositionCallback,failure:PositionErrorCallback)=>denied?failure({code:1,message:'Denied',PERMISSION_DENIED:1,POSITION_UNAVAILABLE:2,TIMEOUT:3}):success(position()),
       watchPosition:(callback:PositionCallback)=>{listener=callback;return 1},
       clearWatch:()=>{listener=undefined},
     }});
     (window as unknown as GPSWindow).sendGps=(lat,lng,speed)=>{time+=6000;listener?.(position(lat,lng,speed))};
-  },{denied});
+  },{denied,accuracy});
   await page.route('**/api/**',async route=>{
     const request=route.request(),action=new URL(request.url()).pathname.split('/').pop();
     const body=request.method()==='POST'?request.postDataJSON():null;
@@ -84,4 +84,15 @@ test('un viaje abierto recupera su trazado y reanuda el GPS sin crear otro viaje
   await page.getByRole('button',{name:'Reanudar GPS',exact:true}).click();
   await expect(page.getByText('Ubicación en vivo',{exact:true})).toBeVisible();
   expect(mock.starts).toBe(0);
+});
+
+test('ubicacion imprecisa aparece en el mapa sin generar alertas ni guardar puntos inexactos',async({page})=>{
+ const mock=await mockDriver(page,{accuracy:1500});await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByText('Ubicación aproximada',{exact:true})).toBeVisible();
+ await expect(page.getByText('Tu próximo camino empieza aquí',{exact:true})).toHaveCount(0);
+ await expect(page.getByText('Alertas en espera: falta velocidad fiable',{exact:true})).toBeVisible();
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,30));
+ expect(mock.events).toHaveLength(0);expect(mock.saved).toHaveLength(0);
+ await expect(page.getByRole('button',{name:'Probar sonido de alerta'})).toBeVisible();
 });
