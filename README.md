@@ -1,5 +1,11 @@
 # Seguimiento de Ruta · Seguridad vial SST
 
+## Inicio directo de rutas
+
+El botón «Iniciar ruta» solicita ubicación e inicia el viaje sin formularios. No se asigna un vehículo automáticamente. Se utiliza la zona urbana (50 km/h) por defecto y el sector «Recorrido GPS»; no existe detección automática de zonas. Las coordenadas identifican el recorrido real.
+
+Para activar este flujo en una base existente, ejecuta `supabase/migrations/003_quick_start.sql` después de las migraciones 001 y 002. Esta actualización permite viajes sin vehículo y mantiene el aislamiento por conductor.
+
 Aplicación React, Next.js y TypeScript con Supabase Auth y PostgreSQL. Las cuentas, perfiles, vehículos, viajes y alertas se guardan en Supabase; la app ya no escribe en SQLite. Requiere Node.js 24 o superior.
 
 ## Configurar Supabase

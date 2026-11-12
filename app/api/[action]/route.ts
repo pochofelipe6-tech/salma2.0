@@ -99,13 +99,18 @@ try{
     if(error){if(error.code==='23505')return fail('La placa ya está registrada.');databaseError(error)}
     return json({ok:true,id:data!.id});
   }else if(action==='start'){
-    if(!positiveId(b.vehicle))return fail('Vehículo no disponible.');
-    const zone=String(b.zone||''),sector=String(b.sector||'').trim().slice(0,150);
+    const zone=String(b.zone||'urbana'),sector=String(b.sector||'Recorrido GPS').trim().slice(0,150);
     if(!Object.hasOwn(zones,zone)||!sector)return fail('Selecciona una zona válida e indica el sector.');
-    const {data:vehicle,error:lookupError}=await supabase.from('vehicles').select('id').eq('id',Number(b.vehicle)).eq('user_id',user.id).maybeSingle();
-    if(lookupError)databaseError(lookupError);
-    if(!vehicle)return fail('Vehículo no disponible.');
-    const {data,error}=await supabase.from('trips').insert({user_id:user.id,vehicle_id:vehicle.id,zone,sector}).select('id,started').single();
+    let vehicleId:number|null=null;
+    if(b.vehicle!=null){
+      if(!positiveId(b.vehicle))return fail('Vehículo no disponible.');
+      const {data:vehicle,error:lookupError}=await supabase.from('vehicles').select('id').eq('id',Number(b.vehicle)).eq('user_id',user.id).maybeSingle();
+      if(lookupError)databaseError(lookupError);
+      if(!vehicle)return fail('Vehículo no disponible.');
+      vehicleId=vehicle.id;
+    }
+    const {data,error}=await supabase.from('trips').insert({user_id:user.id,vehicle_id:vehicleId,zone,sector}).select('id,started').single();
+    if(error?.code==='23502')return fail('Falta activar el inicio directo: ejecuta 003_quick_start.sql en Supabase.',503);
     if(error){if(error.code==='23505')return fail('Ya tienes un viaje activo.');databaseError(error)}
     return json({id:data!.id,started:data!.started});
   }else if(action==='positions'){

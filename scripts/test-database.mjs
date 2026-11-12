@@ -22,6 +22,7 @@ try{
   const routeMigration=await readFile(new URL('../supabase/migrations/002_route_points.sql',import.meta.url),'utf8');
   await db.exec(routeMigration);
   await db.exec(routeMigration);
+  await db.exec(await readFile(new URL('../supabase/migrations/003_quick_start.sql',import.meta.url),'utf8'));
   const first='11111111-1111-4111-8111-111111111111';
   const second='22222222-2222-4222-8222-222222222222';
   const admin='33333333-3333-4333-8333-333333333333';
@@ -30,6 +31,9 @@ try{
   await db.query("update public.profiles set role='admin' where id=$1",[admin]);
   async function asUser(id){await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role authenticated')}
   await asUser(first);
+  const quick=(await db.query("insert into public.trips(zone,sector) values('urbana','Recorrido GPS') returning id,vehicle_id")).rows[0];
+  assert.equal(quick.vehicle_id,null);
+  await db.query('update public.trips set ended=now() where id=$1',[quick.id]);
   assert.equal((await db.query('select * from public.profiles')).rows.length,1);
   await assert.rejects(db.exec("update public.profiles set role='admin'"));
   await assert.rejects(db.exec(`insert into public.vehicles(user_id,plate,model) values('${second}','BAD123','Test')`));

@@ -27,7 +27,7 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false}=
     const reply=(data:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
     if(action==='state')return reply({user,vehicles,trips:trip?[trip]:[],events});
     if(action==='vehicle'){vehicles=[{...vehicle,plate:body.plate,model:body.model}];return reply({id:1})}
-    if(action==='start'){starts++;trip={id:7,user_id:user.id,vehicle_id:body.vehicle,plate:vehicles[0].plate,driver:user.name,zone:body.zone,sector:body.sector,started:new Date().toISOString(),ended:null};return reply({id:7,started:trip.started})}
+    if(action==='start'){starts++;trip={id:7,user_id:user.id,vehicle_id:body.vehicle??null,plate:'Sin vehiculo asignado',driver:user.name,zone:body.zone||'urbana',sector:body.sector||'Recorrido GPS',started:new Date().toISOString(),ended:null};return reply({id:7,started:trip.started})}
     if(action==='positions'){
       if(request.method()==='GET')return reply({points:resume?[{lat:4.65,lng:-74.08,accuracy:8,recorded_at:new Date().toISOString()}]:[]});
       saved.push(...body.points);return reply({ok:true});
@@ -40,7 +40,7 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false}=
 }
 
 test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',async({page})=>{
-  const mock=await mockDriver(page);
+  const mock=await mockDriver(page,{hasVehicle:false});
   await page.setViewportSize({width:1512,height:1050});
   await page.goto('/');
   await expect(page.getByRole('heading',{name:'Hola, Andrea'})).toBeVisible();
@@ -51,8 +51,6 @@ test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',asy
   for(const zone of ['Zona urbana','Vía nacional','Curvas','Escolar / residencial'])await expect(page.getByRole('heading',{name:zone,exact:true})).toBeVisible();
   await page.screenshot({path:'artifacts/driver-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
-  await page.getByLabel('Sector del recorrido').fill('Centro');
-  await page.getByRole('button',{name:'Permitir ubicación e iniciar'}).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page.getByText('Ubicación en vivo',{exact:true})).toBeVisible();
   await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toHaveAttribute('data-points','1');
@@ -67,7 +65,7 @@ test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',asy
   expect(mock.starts).toBe(1);
 });
 
-test('permiso denegado no crea viaje y permite registrar vehículo desde el inicio',async({page})=>{
+test('inicio directo sin formulario y permiso denegado no crea viaje',async({page})=>{
   const mock=await mockDriver(page,{hasVehicle:false,denied:true});
   await page.setViewportSize({width:390,height:844});
   await page.goto('/');
@@ -75,11 +73,7 @@ test('permiso denegado no crea viaje y permite registrar vehículo desde el inic
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path:'artifacts/driver-mobile.png',fullPage:true});
   await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
-  await page.getByLabel('Placa',{exact:true}).fill('ABC123');
-  await page.getByLabel('Marca y modelo').fill('Renault Duster');
-  await page.getByLabel('Sector del recorrido').fill('Centro');
-  await page.getByRole('button',{name:'Permitir ubicación e iniciar'}).click();
-  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Permite el GPS');
+  await expect(page.getByRole('alert').filter({hasText:'Permite el GPS'})).toContainText('Permite el GPS');
   expect(mock.starts).toBe(0);
 });
 
