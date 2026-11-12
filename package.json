@@ -8,19 +8,29 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "check": "tsc --noEmit",
-    "admin": "node scripts/admin.mjs"
+    "admin": "node scripts/admin.mjs",
+    "test:db": "node scripts/test-database.mjs",
+    "check:supabase": "node scripts/check-supabase.mjs",
+    "test:origin": "node --test scripts/test-origin.mjs",
+    "test:ui": "playwright test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.0",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.72.0",
     "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@playwright/test": "^1.65.0",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

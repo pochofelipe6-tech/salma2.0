@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+
+// PostgreSQL embebido: valida la migración real sin modificar el proyecto remoto.
+const db=new PGlite();
+try{
+  await db.exec(`
+    create role anon nologin;
+    create role authenticated nologin;
+    create role service_role nologin bypassrls;
+    create schema auth;
+    create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}');
+    create function auth.uid() returns uuid language sql stable as
+      $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+    grant usage on schema auth,public to authenticated,anon,service_role;
+    grant execute on function auth.uid() to authenticated,anon,service_role;
+  `);
+  const migration=await readFile(new URL('../supabase/migrations/001_initial.sql',import.meta.url),'utf8');
+  await db.exec(migration);
+  await db.exec(migration);
+  const routeMigration=await readFile(new URL('../supabase/migrations/002_route_points.sql',import.meta.url),'utf8');
+  await db.exec(routeMigration);
+  await db.exec(routeMigration);
+  const first='11111111-1111-4111-8111-111111111111';
+  const second='22222222-2222-4222-8222-222222222222';
+  const admin='33333333-3333-4333-8333-333333333333';
+  for(const id of [first,second,admin])await db.query(`insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)`,[id,id+'@example.com',JSON.stringify({name:'Conductor',role:'admin'})]);
+  assert.equal((await db.query('select role from public.profiles where id=$1',[first])).rows[0].role,'driver');
+  await db.query("update public.profiles set role='admin' where id=$1",[admin]);
+  async function asUser(id){await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role authenticated')}
+  await asUser(first);
+  assert.equal((await db.query('select * from public.profiles')).rows.length,1);
+  await assert.rejects(db.exec("update public.profiles set role='admin'"));
+  await assert.rejects(db.exec(`insert into public.vehicles(user_id,plate,model) values('${second}','BAD123','Test')`));
+  const vehicle=(await db.query("insert into public.vehicles(plate,model) values('ABC123','Camioneta') returning id")).rows[0].id;
+  const trip=(await db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','Centro') returning id",[vehicle])).rows[0].id;
+  const addPoint=()=>db.query('insert into public.route_points(trip_id,lat,lng,accuracy,recorded_at) values($1,4.6,-74.1,10,now()) returning id',[trip]);
+  await addPoint();
+  assert.equal((await db.query('select * from public.route_points')).rows.length,1);
+  await assert.rejects(db.query('insert into public.route_points(trip_id,lat,lng,accuracy,recorded_at) values($1,4.6,-74.1,100,now())',[trip]));
+  await assert.rejects(db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','Centro')",[vehicle]));
+  await assert.rejects(db.exec("update public.trips set started=now()"));
+  const addEvent=(speed=60,zone='urbana',lat=4.6)=>db.query("insert into public.events(trip_id,zone,sector,speed,lat,lng) values($1,$2,'Centro',$3,$4,-74.1) returning *",[trip,zone,speed,lat]);
+  assert.equal((await addEvent()).rows[0].limit_speed,50);
+  for(const [zone,limit] of [['nacional',70],['curvas',35],['escolar',30]])assert.equal((await addEvent(limit+5,zone)).rows[0].limit_speed,limit);
+  await assert.rejects(addEvent(50));
+  await assert.rejects(addEvent(301));
+  await assert.rejects(addEvent(60,'urbana',91));
+  await assert.rejects(addEvent(60,'inventada'));
+  await assert.rejects(db.query("insert into public.events(trip_id,zone,sector,speed,limit_speed,lat,lng) values($1,'urbana','Centro',60,10,4,-74)",[trip]));
+  await assert.rejects(db.exec('delete from public.events'));
+  await asUser(second);
+  assert.equal((await db.query('select * from public.events')).rows.length,0);
+  assert.equal((await db.query('select * from public.trips')).rows.length,0);
+  assert.equal((await db.query('select * from public.vehicles')).rows.length,0);
+  assert.equal((await db.query('select * from public.route_points')).rows.length,0);
+  await assert.rejects(addPoint());
+  await assert.rejects(addEvent());
+  await assert.rejects(db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','Centro')",[vehicle]));
+  assert.equal((await db.query('update public.trips set ended=now() where id=$1 returning id',[trip])).rows.length,0);
+  await asUser(admin);
+  assert.equal((await db.query('select * from public.events')).rows.length,4);
+  assert.equal((await db.query('select * from public.profiles')).rows.length,3);
+  assert.equal((await db.query('select * from public.route_points')).rows.length,1);
+  await assert.rejects(addPoint());
+  await assert.rejects(addEvent());
+  await asUser(first);
+  await db.query('update public.trips set ended=now() where id=$1',[trip]);
+  await assert.rejects(addPoint());
+  await assert.rejects(addEvent());
+  assert.equal((await db.query('update public.trips set ended=null where id=$1 returning id',[trip])).rows.length,0);
+  await db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','Centro')",[vehicle]);
+  await db.exec('reset role; set role anon');
+  await assert.rejects(db.query('select * from public.events'));
+  await assert.rejects(db.query('select * from public.route_points'));
+  console.log('PASS: migración PostgreSQL, perfiles, roles, RLS, vehículos, viajes, límites, alertas y aislamiento.');
+}finally{await db.close()}
