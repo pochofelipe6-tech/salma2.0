@@ -9,14 +9,13 @@ type Topic='Seguridad'|'Rutas'|'Ayuda';
 const topics:Record<Topic,{title:string;description:string;items:string[]}>={
   Seguridad:{title:'Límites que protegen la vida',description:'Los límites preventivos SST te ayudan a cuidar cada recorrido.',items:['Zona urbana: 50 km/h.','Vía nacional: 70 km/h.','Curvas: 35 km/h.','Zona escolar o residencial: 30 km/h.','Durante un exceso, la app muestra una alerta y emite un sonido. Mantén la aplicación abierta y permite el acceso al GPS.']},
   Rutas:{title:'Tu próximo viaje, paso a paso',description:'Prepara tu recorrido antes de poner el vehículo en movimiento.',items:['Registra la placa y el modelo en Vehículos.','Selecciona tu vehículo, el tipo de zona y el sector.','Activa el GPS y permite el acceso a tu ubicación.','Mantén la app abierta durante el viaje y finalízalo al llegar.','Las alertas guardan el sector, la hora y las coordenadas del evento. La zona se selecciona manualmente.']},
-  Ayuda:{title:'Estamos para orientarte',description:'Lo que necesitas para empezar a usar Seguimiento de Ruta.',items:['¿Cuenta nueva? Regístrate, revisa tu correo y confirma tu cuenta antes de ingresar.','¿No aparece el correo? Revisa la carpeta de spam y espera unos minutos.','¿Sin señal GPS? Revisa los permisos de ubicación del navegador y mantén la app abierta.','¿Necesitas acceso de administrador? Solicítalo al responsable del sistema. No se asigna desde el registro público.']},
+  Ayuda:{title:'Estamos para orientarte',description:'Lo que necesitas para empezar a usar Seguimiento de Ruta.',items:['¿Cuenta nueva? Registra tus datos, correo y contraseña para comenzar.','¿Ya tienes cuenta? Ingresa con tu correo y contraseña.','¿Sin señal GPS? Revisa los permisos de ubicación del navegador y mantén la app abierta.','¿Necesitas acceso de administrador? Solicítalo al responsable del sistema. No se asigna desde el registro público.']},
 };
 
 export default function AuthScreen({register,busy,error,notice,onSubmit,onToggle}:Props){
   const [visible,setVisible]=useState(false),[topic,setTopic]=useState<Topic>('Ayuda');
   const dialog=useRef<HTMLDialogElement>(null);
   function openTopic(value:Topic){setTopic(value);dialog.current?.showModal()}
-  const steps=register||!!notice;
   return <main className={styles.screen} id="inicio">
     <section className={styles.hero} aria-labelledby="welcome-title">
       <div className={styles.scenery} aria-hidden="true"/>
@@ -44,16 +43,13 @@ export default function AuthScreen({register,busy,error,notice,onSubmit,onToggle
     <section className={styles.formSide} aria-labelledby="auth-title">
       <div className={styles.formCard}>
         <div className={styles.pill}><ShieldCheck/>Tu seguridad, conectada</div>
-        <h2 id="auth-title">{notice?'Verifica tu correo':register?'Crea tu cuenta de conductor':'Bienvenido de nuevo'}</h2>
-        <p className={styles.subtitle}>{notice?'Estás a un paso de comenzar tu primer viaje.':register?'Comienza a usar Seguimiento de Ruta en minutos.':'Ingresa y continúa tu camino con seguridad.'}</p>
-        {steps&&<ol className={styles.steps} aria-label="Progreso del registro">
-          {['Tus datos','Verificación','Listo'].map((label,index)=><li key={label} className={(notice?index===1:index===0)?styles.activeStep:notice&&index===0?styles.doneStep:''} aria-current={(notice?index===1:index===0)?'step':undefined}><span>{notice&&index===0?<Check size={15}/>:index+1}</span><b>{label}</b></li>)}
-        </ol>}
+        <h2 id="auth-title">{register?'Crea tu cuenta de conductor':'Bienvenido de nuevo'}</h2>
+        <p className={styles.subtitle}>{register?'Comienza a usar Seguimiento de Ruta en minutos.':'Ingresa y continúa tu camino con seguridad.'}</p>
         {notice&&<div className={styles.notice} role="status"><Mail size={20}/><p>{notice}</p></div>}
         <form className={styles.form} onSubmit={onSubmit} aria-busy={busy}>
           {register&&<label className={styles.field}><UserRound className={styles.fieldIcon} size={20}/><span>Nombre completo</span><input name="name" autoComplete="name" required placeholder="Tu nombre y apellido" maxLength={100} disabled={busy}/></label>}
           <label className={styles.field}><Mail className={styles.fieldIcon} size={20}/><span>Correo electrónico</span><input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} required placeholder="nombre@empresa.com" disabled={busy}/></label>
-          <label className={styles.field}><LockKeyhole className={styles.fieldIcon} size={20}/><span>Contraseña</span><div className={styles.password}><input name="password" aria-label="Contraseña" type={visible?'text':'password'} autoComplete={register?'new-password':'current-password'} minLength={10} maxLength={128} required placeholder={register?'Crea una contraseña segura':'Ingresa tu contraseña'} aria-describedby={register?'password-hint':undefined} disabled={busy}/><button type="button" aria-label={visible?'Ocultar contraseña':'Mostrar contraseña'} aria-pressed={visible} onClick={()=>setVisible(!visible)}>{visible?<EyeOff size={19}/>:<Eye size={19}/>}</button></div>{register&&<small className={styles.passwordHint} id="password-hint">Usa al menos 10 caracteres.</small>}</label>
+          <label className={styles.field}><LockKeyhole className={styles.fieldIcon} size={20}/><span>Contraseña</span><div className={styles.password}><input name="password" aria-label="Contraseña" type={visible?'text':'password'} autoComplete={register?'new-password':'current-password'} minLength={6} maxLength={128} required placeholder={register?'Crea una contraseña segura':'Ingresa tu contraseña'} aria-describedby={register?'password-hint':undefined} disabled={busy}/><button type="button" aria-label={visible?'Ocultar contraseña':'Mostrar contraseña'} aria-pressed={visible} onClick={()=>setVisible(!visible)}>{visible?<EyeOff size={19}/>:<Eye size={19}/>}</button></div>{register&&<small className={styles.passwordHint} id="password-hint">Usa al menos 6 caracteres.</small>}</label>
           {error&&<div className={styles.error} role="alert"><AlertCircle size={20}/><span>{error}</span></div>}
           <button className={styles.submit} disabled={busy} type="submit"><span>{busy?'Un momento…':register?'Crear cuenta':'Iniciar sesión'}</span>{busy?<span className={styles.spinner} aria-hidden="true"/>:<ArrowRight size={22}/>}</button>
         </form>

@@ -23,9 +23,9 @@ test('registro en escritorio, contraseña visible y confirmación por correo',as
     return route.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,confirmationRequired:true,message:'Revisa tu correo y confirma tu cuenta. Después vuelve aquí e inicia sesión.'})});
   });
   await page.getByRole('button',{name:'Crear cuenta',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Verifica tu correo'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Bienvenido de nuevo'})).toBeVisible();
   await expect(page.getByRole('status')).toContainText('confirma tu cuenta');
-  await expect(page.locator('[aria-current="step"]')).toContainText('Verificación');
+  await expect(page.getByRole('list',{name:'Progreso del registro'})).toHaveCount(0);
   expect(submitted).toEqual({name:'Conductor de prueba',email:'conductor@example.com',password:'MiClaveSegura2026'});
 });
 
@@ -45,4 +45,13 @@ test('vista móvil sin desbordamiento, ayuda y cambio de formulario',async({page
   await expect(page.getByLabel('Nombre completo')).toHaveCount(0);
   await page.getByRole('button',{name:'Regístrate',exact:true}).click();
   await expect(page.getByLabel('Nombre completo')).toBeVisible();
+});
+
+test('registro con sesion entra directamente sin verificacion',async({page})=>{
+ await page.route('**/api/register',async route=>{
+  await page.route('**/api/state',r=>r.fulfill({json:{user:{id:'u1',name:'Andrea',email:'andrea@example.com',role:'driver'},vehicles:[],trips:[],events:[]}}));
+  return route.fulfill({json:{ok:true}});
+ });
+ await page.goto('/');await page.getByLabel('Nombre completo').fill('Andrea');await page.getByLabel('Correo electrónico').fill('andrea@example.com');await page.getByLabel('Contraseña',{exact:true}).fill('abc123');
+ await page.getByRole('button',{name:'Crear cuenta',exact:true}).click();await expect(page.getByRole('heading',{name:'Hola, Andrea'})).toBeVisible();
 });

@@ -40,7 +40,7 @@ try{
   if(action==='login'||action==='register'){
     if(req.method!=='POST')return fail('Método no permitido.',405);
     const email=String(b.email||'').trim().toLowerCase(),password=String(b.password||'');
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<10||password.length>128)return fail('Ingresa un correo válido y una contraseña de 10 a 128 caracteres.');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<6||password.length>128)return fail('Ingresa un correo válido y una contraseña de 6 a 128 caracteres.');
     if(action==='register'){
       const name=String(b.name||'').trim().slice(0,100);
       if(!name)return fail('Ingresa tu nombre.');
@@ -69,11 +69,12 @@ try{
     const profile=profiles.find(p=>p.id===user.id);
     if(!profile)return fail('Falta tu perfil. Ejecuta la migración SQL de Supabase.',503);
     const names=new Map(profiles.map(p=>[p.id,p.name]));
+    const models=new Map(vehicles.map(v=>[v.id,v.model]));
     const plates=new Map(vehicles.map(v=>[v.id,v.plate]));
     const tripVehicles=new Map(trips.map(t=>[t.id,t.vehicle_id]));
     return json({user:{id:user.id,name:profile.name,email:user.email,role:profile.role},
       vehicles:vehicles.map(v=>({...v,driver:names.get(v.user_id)||'Conductor'})),
-      trips:trips.reverse().map(t=>({...t,driver:names.get(t.user_id)||'Conductor',plate:plates.get(t.vehicle_id)||'—'})),
+      trips:trips.reverse().map(t=>({...t,driver:names.get(t.user_id)||'Conductor',plate:plates.get(t.vehicle_id)||'—',model:models.get(t.vehicle_id)||''})),
       events:events.reverse().map(e=>({...e,driver:names.get(e.user_id)||'Conductor',plate:plates.get(tripVehicles.get(e.trip_id)!)||'—'})),
     });
   }
@@ -92,6 +93,36 @@ try{
     return json({points});
   }
   if(req.method!=='POST')return fail('Método no permitido.',405);
+  if(action==='delete-trip'){
+    if(!positiveId(b.trip))return fail('Ruta no válida.');
+    const {data:profile,error:profileError}=await supabase.from('profiles').select('role').eq('id',user.id).single();
+    if(profileError)databaseError(profileError);
+    if(profile?.role!=='admin')return fail('Solo el administrador puede eliminar rutas.',403);
+    const {data:deleted,error}=await supabase.from('trips').delete().eq('id',Number(b.trip)).select('id');
+    if(error){
+      if(error.code==='42501')return fail('Faltan permisos de Supabase. Ejecuta supabase/enable-admin-delete.sql en el SQL Editor para habilitar la eliminación de viajes y vehículos.',503);
+      databaseError(error);
+    }
+    if(!deleted?.length)return fail('La ruta ya no está disponible.',404);
+    return json({ok:true});
+  }
+  if(action==='delete-vehicle'){
+    if(!positiveId(b.vehicle))return fail('Vehiculo no valido.');
+    const {data:profile,error:profileError}=await supabase.from('profiles').select('role').eq('id',user.id).single();
+    if(profileError)databaseError(profileError);
+    if(profile?.role!=='admin')return fail('Solo el administrador puede eliminar vehiculos.',403);
+    const {data:trips,error:tripError}=await supabase.from('trips').select('id').eq('vehicle_id',Number(b.vehicle)).limit(1);
+    if(tripError)databaseError(tripError);
+    if(trips?.length)return fail('Este vehiculo tiene viajes registrados. Se conserva para proteger el historial.',409);
+    const {data:deleted,error}=await supabase.from('vehicles').delete().eq('id',Number(b.vehicle)).select('id');
+    if(error){
+      if(error.code==='42501')return fail('Faltan permisos de Supabase. Ejecuta supabase/enable-admin-delete.sql en el SQL Editor para habilitar la eliminación de viajes y vehículos.',503);
+      if(error.code==='23503')return fail('Este vehiculo tiene viajes registrados. Se conserva para proteger el historial.',409);
+      databaseError(error);
+    }
+    if(!deleted?.length)return fail('El vehiculo ya no esta disponible.',404);
+    return json({ok:true});
+  }
   if(action==='vehicle'){
     const plate=String(b.plate||'').toUpperCase().replace(/\s/g,''),model=String(b.model||'').trim().slice(0,100);
     if(!/^[A-Z0-9-]{5,10}$/.test(plate)||!model)return fail('Revisa la placa y el modelo.');
@@ -101,18 +132,21 @@ try{
   }else if(action==='start'){
     const zone=String(b.zone||'urbana'),sector=String(b.sector||'Recorrido GPS').trim().slice(0,150);
     if(!Object.hasOwn(zones,zone)||!sector)return fail('Selecciona una zona válida e indica el sector.');
-    let vehicleId:number|null=null;
-    if(b.vehicle!=null){
-      if(!positiveId(b.vehicle))return fail('Vehículo no disponible.');
-      const {data:vehicle,error:lookupError}=await supabase.from('vehicles').select('id').eq('id',Number(b.vehicle)).eq('user_id',user.id).maybeSingle();
-      if(lookupError)databaseError(lookupError);
-      if(!vehicle)return fail('Vehículo no disponible.');
-      vehicleId=vehicle.id;
+    const plate=String(b.plate||'').toUpperCase().replace(/\s/g,''),model=String(b.model||'').trim();
+    if(!/^[A-Z0-9-]{5,10}$/.test(plate)||!model||model.length>100)return fail('Ingresa una placa válida y la marca y modelo del vehículo.');
+    const {data:existing,error:lookupError}=await supabase.from('vehicles').select('id,model').eq('plate',plate).eq('user_id',user.id).maybeSingle();
+    if(lookupError)databaseError(lookupError);
+    let vehicleId=existing?.id;
+    if(existing&&existing.model.toLowerCase()!==model.toLowerCase())return fail('Esta placa ya está registrada con el modelo '+existing.model+'. Revisa los datos.');
+    if(!existing){
+      const {data:vehicle,error:vehicleError}=await supabase.from('vehicles').insert({user_id:user.id,plate,model}).select('id').single();
+      if(vehicleError){if(vehicleError.code==='23505')return fail('La placa ya está registrada. Revisa los datos e inténtalo de nuevo.');databaseError(vehicleError)}
+      vehicleId=vehicle!.id;
     }
     const {data,error}=await supabase.from('trips').insert({user_id:user.id,vehicle_id:vehicleId,zone,sector}).select('id,started').single();
     if(error?.code==='23502')return fail('Falta activar el inicio directo: ejecuta 003_quick_start.sql en Supabase.',503);
     if(error){if(error.code==='23505')return fail('Ya tienes un viaje activo.');databaseError(error)}
-    return json({id:data!.id,started:data!.started});
+    return json({id:data!.id,started:data!.started,plate,model:existing?.model||model});
   }else if(action==='positions'){
     if(!positiveId(b.trip)||!Array.isArray(b.points)||!b.points.length||b.points.length>100)return fail('Lote de posiciones inválido.');
     const rows=[];
@@ -143,6 +177,7 @@ try{
 }catch(e){
   const code=e&&typeof e==='object'&&'code' in e?String(e.code):'';
   console.error('Supabase:',code||'connection_error');
+  if(code==='SUPABASE_CONFIG')return fail((e as Error).message,503);
   if(['PGRST205','42P01','PGRST204'].includes(code))return fail('Faltan las tablas de Supabase. Ejecuta supabase/migrations/001_initial.sql en el SQL Editor de tu proyecto.',503);
   return fail('No se pudo acceder a Supabase. Revisa la conexión y la configuración del proyecto.',503);
 }

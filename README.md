@@ -27,6 +27,19 @@ npm run dev
 
 Abre http://localhost:3000. Crea una cuenta y confirma el correo. Todas las cuentas nuevas abren la vista de conductor, con un único flujo de «Iniciar ruta», mapa GPS y límites preventivos. Desde ese botón puedes seleccionar o registrar el vehículo y configurar zona y sector. El navegador pedirá permiso de ubicación. El GPS debe entregar velocidad y precisión de hasta 60 metros; de lo contrario se informa que la señal o la velocidad no están disponibles.
 
+## Probar el GPS en el celular
+
+Un computador sin GPS calcula su ubicación con las redes Wi-Fi cercanas y puede equivocarse de país. Para probar con el GPS real, abre la app en el celular. El navegador solo entrega la ubicación por HTTPS, así que existe un acceso HTTPS para la red local:
+
+1. Deja `npm run dev` corriendo y, en otra terminal, ejecuta `npm run movil`.
+2. Conecta el celular al mismo Wi-Fi del computador y abre la dirección `https://<IP>:3443` que muestra la terminal.
+3. El navegador avisará que la conexión no es privada, porque el certificado es local. Toca «Configuración avanzada» → «Continuar», inicia sesión, toca «Iniciar ruta» y permite la ubicación.
+
+- Si la página no carga, la red bloquea las conexiones entre dispositivos; pasa a menudo en redes corporativas o de invitados. Activa el punto de acceso del celular, conecta el computador a esa red y vuelve a ejecutar `npm run movil`: detecta la nueva IP y renueva el certificado.
+- Para quitar el aviso, instala el certificado raíz que ofrece la dirección `https://<IP>:3443/__certificado-movil.crt`. Hazlo también si usas iPhone o si la página se recarga sola cada pocos segundos. En Android, búscalo en Ajustes como «Instalar certificado» → «Certificado de CA». En iPhone, instala el perfil descargado y activa la confianza total en Ajustes → General → Información → Ajustes de confianza de certificados. Ese certificado solo es válido para direcciones de red local y `localhost`.
+- Los certificados se crean con OpenSSL (incluido en Git para Windows) en `certificates/`, carpeta excluida de Git. No compartas `movil-ca.key`.
+- Para medir la velocidad y guardar el recorrido, el GPS necesita una precisión de 60 m o mejor. Prueba al aire libre.
+
 ## Asignar administrador después
 
 Registra primero la cuenta. Abre [supabase/assign-admin.sql](supabase/assign-admin.sql), reemplaza el correo y ejecuta la consulta en SQL Editor. Actualiza el panel después de asignar el rol.
@@ -75,3 +88,14 @@ npm start
 `test:ui` usa Microsoft Edge instalado y Playwright para comprobar registro, vista exclusiva del conductor, GPS simulado, denegación de permisos, posiciones del mapa, alertas, reanudación, finalización y adaptación móvil. No escribe datos en Supabase.
 
 En producción configura las variables en el alojamiento y usa HTTPS. Los registros viven en Supabase; no necesitas un disco local persistente para la app.
+
+## Credenciales en Vercel
+
+En el proyecto Vercel, abre Settings > Environment Variables y agrega para Production:
+
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+
+Usa los valores del mismo proyecto que en .env.local, sin comillas. El archivo .env.local no se publica en Git. Tambien se admite NEXT_PUBLIC_SUPABASE_ANON_KEY para proyectos que usen la clave anon.
+Despues abre Deployments > Redeploy para aplicar las variables. Configura en Supabase Authentication > URL Configuration el dominio de produccion y su ruta /auth/callback.
+Una respuesta 503 de /api/state indica un problema del servidor; sin sesion y con configuracion correcta debe responder 401.

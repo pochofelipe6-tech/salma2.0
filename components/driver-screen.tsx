@@ -6,6 +6,10 @@ import {routeApi,routeZones,routeDistance,type DriverData,type DriverTrip,type R
 import styles from './driver-screen.module.css';
 
 export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;onRefresh:()=>Promise<void>;onLogout:()=>Promise<void>}){
+  const [vehicleForm,setVehicleForm]=useState(false),[plate,setPlate]=useState(''),[model,setModel]=useState('');
+  const completionDialog=useRef<HTMLDialogElement>(null);
+  const [completion,setCompletion]=useState<{distance:string;duration:string;count:number;plate:string}|null>(null);
+  useEffect(()=>{if(completion){completionDialog.current?.showModal();const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}}},[completion]);
   const initial=data.trips.find(t=>t.user_id===data.user.id&&!t.ended)||null;
   const [trip,setTrip]=useState<DriverTrip|null>(initial),[tracking,setTracking]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saveError,setSaveError]=useState(''),[position,setPosition]=useState<RoutePoint|null>(null),[points,setPoints]=useState<RoutePoint[]>([]),[speed,setSpeed]=useState<number|null>(null),[gps,setGps]=useState('GPS desconectado'),[stale,setStale]=useState(true),[now,setNow]=useState(Date.now()),[finished,setFinished]=useState(false);
   const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),over=useRef(false),sendingEvent=useRef(false),lastBeep=useRef(0),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
@@ -87,10 +91,10 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     if(starting.current)return;starting.current=true;setBusy(true);setError('');
     try{
       const first=await locate();
-      const started=await routeApi('start',{});
-      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:'Sin vehículo asignado',driver:data.user.name,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
+      const started=await routeApi('start',{plate,model});
+      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:started.plate,model:started.model,driver:data.user.name,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
       queue.current=[];setPoints([]);setPosition(null);setSpeed(null);
-      await connectGPS(first,current);await onRefresh();
+      setVehicleForm(false);await connectGPS(first,current);await onRefresh();
     }catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
   async function resume(){
@@ -104,26 +108,43 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
       if(flushing.current)throw new Error('Se está guardando el recorrido. Espera un momento y vuelve a finalizar.');
       if(!await flush())throw new Error('Hay posiciones pendientes de guardar. Revisa la conexión y vuelve a finalizar.');
       if(sendingEvent.current)throw new Error('Se está guardando una alerta. Espera un momento y vuelve a finalizar.');
-      await routeApi('end',{trip:trip.id});setTrip(null);tripRef.current=null;setGps('Ruta finalizada');setFinished(true);await onRefresh();
+      await routeApi('end',{trip:trip.id});setCompletion({distance:distance.toFixed(2),duration:[Math.floor((Date.now()-Date.parse(trip.started))/3600000),Math.floor((Date.now()-Date.parse(trip.started))/60000)%60,Math.floor((Date.now()-Date.parse(trip.started))/1000)%60].map(n=>String(Math.max(0,n)).padStart(2,'0')).join(':'),count:new Set(points.map(p=>p.recorded_at)).size,plate:trip.plate});setTrip(null);tripRef.current=null;setGps('Ruta finalizada');setFinished(true);await onRefresh();
     }catch(e){setError((e as Error).message)}finally{setBusy(false)}
   }
 
   return <div className={styles.screen}>
+    <dialog ref={completionDialog} className={styles.completionDialog} aria-labelledby="completion-title" aria-describedby="completion-description" onClose={()=>setCompletion(null)}>
+      {completion&&<div className={styles.completionContent}>
+        <div className={styles.completionSparkles} aria-hidden="true"/>
+        <div className={styles.completionCheck}><Check size={48} strokeWidth={4}/></div>
+        <span className={styles.completionEyebrow}>LLEGASTE SEGURO</span>
+        <h2 id="completion-title">¡Ruta finalizada!</h2>
+        <p id="completion-description">Tu viaje y las posiciones están guardados.</p>
+        <div className={styles.completionMetrics}>
+          <div><MapPin size={20}/><strong>{completion.distance} <small>km</small></strong><span>Distancia</span></div>
+          <div><Clock3 size={20}/><strong>{completion.duration}</strong><span>Tiempo</span></div>
+          <div><Route size={20}/><strong>{completion.count}</strong><span>Posiciones</span></div>
+        </div>
+        <button autoFocus className={styles.completionAccept} onClick={()=>completionDialog.current?.close()}><Check size={21}/>Aceptar</button>
+        <span className={styles.completionFooter}><ShieldCheck size={14}/>{completion.plate} · Cada kilómetro seguro cuenta</span>
+      </div>}
+    </dialog>
     <header className={styles.header}><a href="/" className={styles.brand}><ShieldCheck/><span>Seguimiento<br/>de Ruta</span><b>SST</b></a><div className={styles.headerRight}><span className={styles.driverBadge}><Car size={16}/> Conductor</span><span className={styles.userName}>{data.user.name}</span><div className={styles.avatar}>{data.user.name.slice(0,1).toUpperCase()}</div><button className={styles.logout} disabled={tracking||busy} aria-label="Cerrar sesión" title={tracking?'Finaliza tu ruta antes de salir':'Cerrar sesión'} onClick={()=>void onLogout().catch(()=>setError('No se pudo cerrar la sesión.'))}><LogOut size={18}/></button></div></header>
     <main className={styles.content}>
       <div className={styles.welcome}><div><span className={styles.eyebrow}>TU SEGURIDAD ES EL CAMINO</span><h1>Hola, {data.user.name.split(' ')[0]}<span> 👋</span></h1><p>{tracking?'Vamos contigo. Conduce con calma y mantén la app abierta.':'Un nuevo recorrido, la misma prioridad: llegar seguro.'}</p></div><span className={styles.date}><CalendarDays size={19}/>{new Date(now).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})}</span></div>
       {error&&<div className={styles.error} role="alert"><AlertTriangle size={18}/>{error}<button onClick={()=>setError('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
       {saveError&&<div className={styles.warning} role="status">{saveError}</div>}
-      {finished&&<div className={styles.success} role="status"><Check size={18}/>Ruta finalizada. Tu viaje y las posiciones guardadas están en Supabase.</div>}
+      {finished&&<div className={styles.success} role="status"><Check size={18}/>Ruta finalizada. Tu viaje y las posiciones están guardados.</div>}
       <div className={styles.journeyGrid}>
         <section className={styles.mapCard} aria-labelledby="route-map-title"><div className={styles.mapHead}><div><span className={styles.miniIcon}><Route size={18}/></span><h2 id="route-map-title">Tu ruta en tiempo real</h2></div><span className={styles.mapLegend}><i/> Recorrido GPS</span></div><RouteMap points={points} position={position} tracking={tracking} stale={stale}/><div className={styles.mapFooter}><MapPin size={14}/><span>{position?`${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · precisión ±${Math.round(position.accuracy)} m`:'Tu ubicación aparecerá al iniciar la ruta.'}</span><span className={styles.privateNote}><ShieldCheck size={13}/> Tu recorrido, protegido</span></div></section>
         <section className={styles.tripCard}>
           <div className={styles.tripIntro}><span className={styles.tripIcon}><Navigation size={24}/></span><span className={styles.tripBadge}>{tracking?'EN RUTA':trip?'RUTA PENDIENTE':'LISTO PARA SALIR'}</span></div>
           <h2>{tracking?'Buen camino.':trip?'Continúa tu recorrido.':'Tu próxima ruta empieza aquí.'}</h2><p>{tracking?'Tu ubicación se actualiza con el GPS. Nosotros te avisamos si excedes el límite.':trip?'Puedes reanudar el GPS o finalizar el viaje que dejaste abierto.':'Activa tu ubicación y deja que te acompañemos en cada kilómetro.'}</p>
           <div className={styles.speedMonitor+' '+(excess?styles.excess:'')}><span>VELOCIDAD ACTUAL</span><strong>{speed===null||stale?'—':Math.round(speed)}<small>km/h</small></strong><div>{excess?<><AlertTriangle size={15}/> Reduce la velocidad</>:<><ShieldCheck size={15}/>{tracking?(stale||speed===null?'Alertas en espera: falta velocidad fiable':'Alertas de velocidad activas'):'La prevención va contigo'}</>}</div></div>
-          {trip&&<div className={styles.tripDetails}><span><Car size={15}/><b>{trip.plate}</b></span><span><MapPin size={15}/>{trip.sector}</span></div>}
+          {trip&&<div className={styles.tripDetails}><span><Car size={15}/><b>{trip.plate}{trip.model&&` · ${trip.model}`}</b></span><span><MapPin size={15}/>{trip.sector}</span></div>}
           <div className={styles.routeMetrics}><div><Route size={15}/><strong>{distance.toFixed(2)} <small>km</small></strong><span>Recorrido GPS</span></div><div><Clock3 size={15}/><strong>{trip?duration:'00:00:00'}</strong><span>Tiempo de ruta</span></div></div>
-          {!trip?<button className={styles.startButton} onClick={()=>void begin()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS?':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
+          {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
+          {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
           <p className={styles.alertExplanation}>Límite aplicado: <b>{limit} km/h</b>. La app aún no detecta zonas automáticamente.</p><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>

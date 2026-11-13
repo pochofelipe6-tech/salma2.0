@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
+    "movil": "node scripts/movil.mjs",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "check": "tsc --noEmit",
