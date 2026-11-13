@@ -2,16 +2,17 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {Bell,CalendarDays,Car,ChevronRight,Download,LayoutGrid,LogOut,MapPin,Plus,Route,Search,ShieldCheck,Trash2,Check,AlertTriangle} from 'lucide-react';
 import {routeApi,routeZones} from '../lib/route-types';
+import ZoneReview from './zone-review';
 import styles from './admin-screen.module.css';
 
 type Vehicle={id:number;user_id:string;plate:string;model:string;driver:string};
 type Trip={id:number;user_id:string;plate:string;model?:string;driver:string;zone:string;sector:string;started:string;ended:string|null};
 type RouteEvent={road_id?:string;id:number;plate:string;driver:string;zone:string;sector:string;speed:number;limit_speed:number;created:string;lat:number;lng:number};
 export type AdminData={user:{id:string;name:string;email:string;role:string};vehicles:Vehicle[];trips:Trip[];events:RouteEvent[]};
-type Tab='Resumen'|'Viajes'|'Vehículos'|'Alertas';
+type Tab='Resumen'|'Viajes'|'Vehículos'|'Alertas'|'Zonas';
 
-const tabs=[{id:'Resumen',icon:LayoutGrid},{id:'Viajes',icon:Route},{id:'Vehículos',icon:Car},{id:'Alertas',icon:Bell}] as const;
-const titles:Record<Tab,string>={Resumen:'Panel de seguridad vial',Viajes:'Viajes de la flota',Vehículos:'Vehículos',Alertas:'Alertas'};
+const tabs=[{id:'Resumen',icon:LayoutGrid},{id:'Viajes',icon:Route},{id:'Vehículos',icon:Car},{id:'Alertas',icon:Bell},{id:'Zonas',icon:MapPin}] as const;
+const titles:Record<Tab,string>={Resumen:'Panel de seguridad vial',Viajes:'Viajes de la flota',Vehículos:'Vehículos',Alertas:'Alertas',Zonas:'Zonas de los recorridos'};
 const zoneName=(id:string)=>routeZones.find(z=>z.id===id)?.name||id;
 const dateTime=(value:string)=>new Date(value).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});
 
@@ -154,6 +155,7 @@ export default function AdminScreen({data,error,onError,onRefresh,onLogout}:{dat
         </>}
 
         {tab==='Alertas'&&alertsPanel}
+        {tab==='Zonas'&&<ZoneReview/>}
 
         {tab==='Viajes'&&<section className={styles.panel} aria-labelledby="trips-title">
           <div className={styles.panelHead}><div><h2 id="trips-title" tabIndex={-1}>Historial de viajes</h2><p>Todos los recorridos de la flota, en curso y finalizados.</p></div></div>

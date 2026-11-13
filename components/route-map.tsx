@@ -6,7 +6,7 @@ import type {RoutePoint} from '../lib/route-types';
 import BuildingsMap,{type BuildingView,type BuildingControls} from './buildings-map';
 import styles from './driver-screen.module.css';
 
-export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string}){
+export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId,markerLabel='Tu ubicación'}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string;markerLabel?:string}){
   const container=useRef<HTMLDivElement>(null),map=useRef<Leaflet.Map|null>(null),line=useRef<Leaflet.Polyline|null>(null),marker=useRef<Leaflet.Marker|null>(null),accuracy=useRef<Leaflet.Circle|null>(null),centered=useRef(false),frame=useRef<HTMLDivElement>(null);
   const latest=useRef({points,position});latest.current={points,position};
   const [ready,setReady]=useState(0),[follow,setFollow]=useState(true),[tilesError,setTilesError]=useState(false),[baseMap,setBaseMap]=useState<'loading'|'vector'|'standard'>('loading'),[expanded,setExpanded]=useState(false);
@@ -53,7 +53,7 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
       L.control.zoom({position:'bottomright',zoomInTitle:'Acercar mapa',zoomOutTitle:'Alejar mapa'}).addTo(m);
       L.control.scale({position:'bottomleft',imperial:false,maxWidth:100}).addTo(m);
       line.current=L.polyline([],{color:'#1167e9',weight:5,opacity:.9,lineCap:'round'}).addTo(m);
-      marker.current=L.marker(current?[current.lat,current.lng]:[0,0],{title:'Tu ubicación',alt:'Tu ubicación',zIndexOffset:1000,icon:L.divIcon({className:styles.positionMarker,html:'<span></span><b>Tu ubicación</b>',iconSize:[28,28],iconAnchor:[14,14]})});
+      marker.current=L.marker(current?[current.lat,current.lng]:[0,0],{title:markerLabel,alt:markerLabel,zIndexOffset:1000,icon:L.divIcon({className:styles.positionMarker,html:(()=>{const element=document.createElement('div');element.innerHTML='<span></span>';const label=document.createElement('b');label.textContent=markerLabel;element.append(label);return element})(),iconSize:[28,28],iconAnchor:[14,14]})});
       accuracy.current=L.circle(current?[current.lat,current.lng]:[0,0],{radius:current?.accuracy||10,color:'#2f84f4',weight:1,fillOpacity:.08});
       m.on('dragstart',()=>setFollow(false));
       m.on('moveend',()=>{if(container.current){const c=m.getCenter();container.current.dataset.centerLat=String(c.lat);container.current.dataset.centerLng=String(c.lng);container.current.dataset.zoom=String(m.getZoom())}});
@@ -75,8 +75,8 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
   useEffect(()=>{const changed=()=>setExpanded(document.fullscreenElement===frame.current);document.addEventListener('fullscreenchange',changed);return()=>document.removeEventListener('fullscreenchange',changed)},[]);
   return <div ref={frame} className={styles.mapFrame}>
     <div ref={container} className={styles.mapCanvas} role="img" aria-hidden={!!buildingView} inert={!!buildingView} style={buildingView?{visibility:'hidden'}:undefined} aria-label="Mapa del recorrido GPS" data-points={points.length}/>
-    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} onDrag={()=>setFollow(false)} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(true)}}/>}
-    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
+    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} onDrag={()=>setFollow(false)} markerLabel={markerLabel} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(true)}}/>}
+    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?(markerLabel==='Tramo propuesto'?'Tramo a revisar':'Recorrido registrado'):'Esperando tu ubicación'}</div>
     {zoneLabel&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}
     <button className={styles.recenter} aria-label="Centrar en mi ubicación" disabled={!position&&!points.length} onClick={()=>{setFollow(true);centerOnPosition(true)}}><LocateFixed size={19}/></button>
     <button className={styles.mapExpand} aria-label={expanded?'Salir de pantalla completa':'Ampliar mapa'} title={expanded?'Salir de pantalla completa':'Ampliar mapa'} onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen().catch(()=>{});else void frame.current?.requestFullscreen?.().catch(()=>{})}}>{expanded?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>

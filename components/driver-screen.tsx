@@ -12,8 +12,10 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   const [completion,setCompletion]=useState<{distance:string;duration:string;count:number;plate:string}|null>(null);
   useEffect(()=>{if(completion){completionDialog.current?.showModal();const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}}},[completion]);
   const initial=data.trips.find(t=>t.user_id===data.user.id&&!t.ended)||null;
+  const [collectMode,setCollectMode]=useState(!!initial?.collect_zones),[collectBusy,setCollectBusy]=useState(false),[collected,setCollected]=useState(0),[collectError,setCollectError]=useState('');
+  const collectRef=useRef(!!initial?.collect_zones),surveyQueue=useRef<Array<{trip:number;fix:RoadFix;previous:RoadFix}>>([]),surveyTask=useRef<Promise<boolean>|null>(null),lastSurvey=useRef(0),surveyFailure=useRef('');
   const [trip,setTrip]=useState<DriverTrip|null>(initial),[tracking,setTracking]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saveError,setSaveError]=useState(''),[position,setPosition]=useState<RoutePoint|null>(null),[points,setPoints]=useState<RoutePoint[]>([]),[speed,setSpeed]=useState<number|null>(null),[gps,setGps]=useState('GPS desconectado'),[stale,setStale]=useState(true),[now,setNow]=useState(Date.now()),[finished,setFinished]=useState(false);
-  const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),lastSaveFailure=useRef(''),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
+  const gpsRunning=useRef(false),watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),lastSaveFailure=useRef(''),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
   tripRef.current=trip;
   const [road,setRoad]=useState<RoadMatch>({status:'unknown',reason:'Inicia la ruta para detectar el tramo.',limit:null});
   const previousFix=useRef<RoadFix|null>(null),lookupVersion=useRef(0),lastSound=useRef(0),alertedRoad=useRef('');
@@ -36,8 +38,33 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const timer=setInterval(()=>{setNow(Date.now());if(tracking&&Date.now()-lastSeen.current>15000){lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'Sin GPS reciente.',limit:null});setStale(true);setSpeed(null);setGps('Sin señal GPS reciente')}},1000);
     return()=>clearInterval(timer);
   },[tracking]);
-  useEffect(()=>{if(!tracking)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking]);
+  useEffect(()=>{if(!tracking&&!queue.current.length&&!surveyQueue.current.length)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking,collectError,saveError,collected]);
 
+  useEffect(()=>{
+    if(!trip?.id||!collectMode)return;
+    let cancelled=false;
+    void routeApi('survey-count?trip='+trip.id).then(r=>{if(!cancelled&&tripRef.current?.id===trip.id)setCollected(n=>Math.max(n,r.count||0))}).catch(e=>{if(!cancelled)setCollectError((e as Error).message)});
+    return()=>{cancelled=true};
+  },[trip?.id,collectMode]);
+  async function flushSurvey():Promise<boolean>{
+    if(surveyTask.current)return surveyTask.current;
+    const task=(async()=>{
+      try{
+        while(surveyQueue.current.length){const item=surveyQueue.current[0];const result=await routeApi('survey',item);surveyQueue.current.shift();if(mounted.current)setCollected(n=>Math.max(n,result.count??n+(result.created||0)))}
+        surveyFailure.current='';if(mounted.current)setCollectError('');return true;
+      }catch(e){surveyFailure.current=(e as Error).message;if(mounted.current)setCollectError(surveyFailure.current);return false}
+    })();
+    surveyTask.current=task;try{return await task}finally{surveyTask.current=null}
+  }
+  async function toggleCollection(){
+    if(busy||collectBusy)return;setCollectBusy(true);setCollectError('');
+    try{
+      if(collectMode)collectRef.current=false;
+      if(trip){if(collectMode&&!await flushSurvey())throw new Error(surveyFailure.current);await routeApi('collect-mode',{trip:trip.id,enabled:!collectMode});setTrip({...trip,collect_zones:!collectMode})}
+      collectRef.current=!collectMode;setCollectMode(!collectMode);
+    }catch(e){collectRef.current=collectMode;setCollectError((e as Error).message)}finally{setCollectBusy(false)}
+  }
+  useEffect(()=>{if(!tracking||!collectMode)return;const timer=setInterval(()=>{void flushSurvey()},7000);return()=>clearInterval(timer)},[tracking,collectMode]);
   async function flush(){
     if(flushing.current)return false;
     const current=tripRef.current;if(!current||!queue.current.length)return true;
@@ -68,7 +95,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const sound=()=>{if(Date.now()-lastSound.current>=5000){beep();lastSound.current=Date.now()}};sound();const timer=setInterval(sound,1000);return()=>clearInterval(timer);
   },[excess]);
   function receive(p:GeolocationPosition){
-    if(!mounted.current||!tripRef.current)return;
+    if(!mounted.current||!tripRef.current||!gpsRunning.current)return;
     if(!Number.isFinite(p.coords.latitude)||Math.abs(p.coords.latitude)>90||!Number.isFinite(p.coords.longitude)||Math.abs(p.coords.longitude)>180||!Number.isFinite(p.coords.accuracy)||p.coords.accuracy<0){lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'GPS inválido.',limit:null});setStale(true);setSpeed(null);setGps('Ubicación no disponible · buscando GPS');return}
     if(Date.now()-p.timestamp>15000)return;
     lastSeen.current=Date.now();setStale(false);setGps('GPS conectado');
@@ -82,6 +109,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     setSpeed(km);
     if(km===null)setGps('GPS conectado · velocidad no disponible');
     const current=tripRef.current,previous=previousFix.current;previousFix.current=point;
+    if(collectRef.current&&previous&&point.accuracy<=25&&p.timestamp-lastSurvey.current>=5000){lastSurvey.current=p.timestamp;surveyQueue.current.push({trip:current.id,fix:point,previous});void flushSurvey()}
     const version=++lookupVersion.current;
     setRoad({status:'unknown',reason:'Identificando vía y límite...',limit:null});
     void routeApi('road',{fix:point,previous}).then(async result=>{
@@ -107,7 +135,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     catch{throw new Error('No se pudo obtener tu ubicación. Permite el GPS en el navegador y vuelve a intentarlo.')}
   }
   async function connectGPS(first:GeolocationPosition,current:DriverTrip){
-    previousFix.current=null;lookupVersion.current++;alertedRoad.current='';tripRef.current=current;setTrip(current);setTracking(true);setFinished(false);lastSeen.current=Date.now();lastSaved.current=0;
+    gpsRunning.current=true;previousFix.current=null;lookupVersion.current++;alertedRoad.current='';tripRef.current=current;setTrip(current);setTracking(true);setFinished(false);lastSeen.current=Date.now();lastSaved.current=0;
     try{audio.current??=new AudioContext();await audio.current.resume()}catch{}
     try{if('Notification' in window&&Notification.permission==='default')void Notification.requestPermission()}catch{}
     receive(first);
@@ -119,9 +147,9 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     try{
       try{audio.current??=new AudioContext();await audio.current.resume()}catch{}
       const first=await locate();
-      const started=await routeApi('start',{plate,model});
-      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:started.plate,model:started.model,driver:data.user.name,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
-      queue.current=[];setPoints([]);setPosition(null);setSpeed(null);
+      const started=await routeApi('start',{plate,model,...(collectMode?{collectZones:true}:{})});
+      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:started.plate,model:started.model,driver:data.user.name,collect_zones:collectMode,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
+      queue.current=[];surveyQueue.current=[];lastSurvey.current=0;setCollected(0);setPoints([]);setPosition(null);setSpeed(null);
       setVehicleForm(false);await connectGPS(first,current);await onRefresh();
     }catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
@@ -130,9 +158,10 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     try{await connectGPS(await locate(),trip)}catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
   async function finish(){
-    if(!trip||busy)return;setBusy(true);setError('');
+    if(!trip||busy||collectBusy)return;gpsRunning.current=false;setBusy(true);setError('');
     if(watch.current!==null)navigator.geolocation.clearWatch(watch.current);watch.current=null;lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'Ruta finalizada.',limit:null});setTracking(false);setSpeed(null);setStale(true);
     try{
+      if(!await flushSurvey())throw new Error(surveyFailure.current+' Las propuestas siguen pendientes. Mantén esta pestaña abierta y vuelve a finalizar tras corregirlo.');
       if(flushing.current)throw new Error('Se está guardando el recorrido. Espera un momento y vuelve a finalizar.');
       if(!await flush())throw new Error(lastSaveFailure.current+' Mantén esta pestaña abierta y vuelve a finalizar después de corregirlo.');
       if(sendingEvent.current)throw new Error('Se está guardando una alerta. Espera un momento y vuelve a finalizar.');
@@ -183,8 +212,15 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
           <div className={styles.speedMonitor+' '+(excess?styles.excess:'')}><span>VELOCIDAD ACTUAL</span><strong>{speed===null||stale?'—':Math.round(speed)}<small>km/h</small></strong><div>{excess?<><AlertTriangle size={15}/> Reduce la velocidad</>:<><ShieldCheck size={15}/>{tracking?(stale||speed===null?'Alertas en espera: falta velocidad fiable':limit===null?'Alertas en espera: límite no disponible':'Alertas de velocidad activas'):'La prevención va contigo'}</>}</div></div>
           {trip&&<div className={styles.tripDetails}><span><Car size={15}/><b>{trip.plate}{trip.model&&` · ${trip.model}`}</b></span><span><MapPin size={15}/>{trip.sector}</span></div>}
           <div className={styles.routeMetrics}><div><Route size={15}/><strong>{distance.toFixed(2)} <small>km</small></strong><span>Recorrido GPS</span></div><div><Clock3 size={15}/><strong>{trip?duration:'00:00:00'}</strong><span>Tiempo de ruta</span></div></div>
+          <div className={styles.surveyMode} data-active={collectMode}>
+            <button type="button" className={styles.surveyToggle} aria-pressed={collectMode} disabled={busy||collectBusy} onClick={()=>void toggleCollection()}><MapPin size={19}/><span>Registrar zonas del recorrido<small>{collectBusy?'Guardando...':collectMode?'Activado':'Desactivado'}</small></span>{collectMode&&<Check size={18}/>}</button>
+            <p>{collectMode?'Inicia o continúa tu ruta. Guardaremos propuestas de los tramos que podamos identificar.':'Actívalo para recopilar posibles zonas durante tu ruta.'}</p>
+            <small>Las propuestas nuevas generarán alertas después de la confirmación del administrador.</small>
+            {collectMode&&<div role="status">{collected} propuestas guardadas{surveyQueue.current.length>0?' · Guardado pendiente':''}</div>}
+            {collectError&&<div role="alert">{collectError}</div>}
+          </div>
           {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
-          {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
+          {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy||collectBusy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
           <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.roadName||road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Clasificación basada en OpenStreetMap. Si falta información, no se asigna zona.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>

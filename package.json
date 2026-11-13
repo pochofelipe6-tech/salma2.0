@@ -15,7 +15,8 @@
     "test:origin": "node --test scripts/test-origin.mjs",
     "test:ui": "playwright test",
     "maps:build": "node scripts/build-road-catalog.mjs",
-    "test:maps": "node scripts/test-road-matcher.mjs && node scripts/test-automatic-limits-db.mjs"
+    "test:maps": "node scripts/test-road-matcher.mjs && node scripts/test-automatic-limits-db.mjs",
+    "test:survey": "node scripts/test-zone-survey.mjs"
   },
   "keywords": [],
   "author": "",

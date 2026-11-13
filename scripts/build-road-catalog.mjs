@@ -10,6 +10,8 @@ const roads=raw.roads.map(r=>{
   return {id:String(r.id),name:t.name||t.ref||'Vía sin nombre',kind:t.highway,zone,label,limit,geometry:r.coordinates.map(p=>p.map(n=>+n.toFixed(7)))};
 });
 await mkdir('assets/maps',{recursive:true});
+const schools=raw.schools.map(s=>{const points=s.type==='node'?[s.coordinates]:s.coordinates;return {id:s.type+':'+s.id,name:s.tags.name||'Colegio sin nombre',coordinates:[points.reduce((v,p)=>v+p[0],0)/points.length,points.reduce((v,p)=>v+p[1],0)/points.length]}});
+await writeFile('assets/maps/atlantico-schools.json',JSON.stringify(schools));
 await writeFile('assets/maps/atlantico-roads.json',JSON.stringify({source:'OpenStreetMap',date:raw.metadata.downloadedAt,license:'ODbL-1.0',roads}));
 const quote=s=>"'"+s.replaceAll("'","''")+"'";
 const rows=roads.filter(r=>r.limit).map(r=>`(${quote(r.id)},${quote(r.name)},${quote(r.zone)},${r.limit},${quote(JSON.stringify(r.geometry))}::jsonb)`);
@@ -27,5 +29,5 @@ commit;
 `;
 await writeFile('supabase/migrations/008_sst_zone_limits.sql',policySql);
 const schema=await readFile('supabase/migrations/006_automatic_limits.sql','utf8');
-await writeFile('supabase/enable-automatic-limits.sql','-- Ejecutar completo en Supabase > SQL Editor. No elimina viajes ni eventos.\n'+schema+'\n'+sql+'\n'+policySql);
+await writeFile('supabase/enable-automatic-limits.sql','-- Ejecutar completo en Supabase > SQL Editor. No elimina viajes ni eventos.\n'+schema+'\n'+sql+'\n'+policySql+'\n'+await readFile('supabase/migrations/009_route_zone_survey.sql','utf8'));
 console.log(`${roads.length} vías incluidas; ${rows.length} límites fijos utilizables. Datos versionados para Vercel.`);

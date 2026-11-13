@@ -109,3 +109,7 @@ La nueva version consulta limites por tramo con el GPS y el catalogo OSM incluid
 El mapa usa MapLibre GL con OpenFreeMap (estilo Liberty) para calles y etiquetas nitidas al ampliar, sin clave API. Conserva el zoom del usuario durante el seguimiento GPS e incluye escala y pantalla completa. Si el dispositivo no puede cargar la vista vectorial, usa el mapa estandar con sobrezoom hasta nivel 21. Requiere conexion para cargar datos del mapa y conserva la atribucion de OpenFreeMap, OpenMapTiles y OpenStreetMap. Esta mejora visual no agrega datos de curvas al detector SST.
 
 La vista opcional de edificaciones 3D usa la capa building-3d de OpenFreeMap con perspectiva inclinada, controles y trazado GPS propios. Las formas y alturas dependen del mapa y no representan una reconstruccion fotografica exacta. Mostrar colegios o curvas en el mapa no activa por si solo su deteccion como zona SST.
+
+## Registrar propuestas de zonas
+
+Ejecutar `supabase/migrations/009_route_zone_survey.sql` despues de 008. El conductor puede activar **Registrar zonas del recorrido** y usar **Iniciar ruta** normalmente. Las observaciones se guardan como propuestas; se revisan en **Administrador > Zonas**. Solo las confirmadas se usan como zonas adicionales de alerta en recorridos posteriores. La cola pendiente requiere mantener la pestana abierta. Pruebas: `npm run test:survey`.

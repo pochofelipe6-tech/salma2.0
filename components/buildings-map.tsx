@@ -7,7 +7,7 @@ import styles from './driver-screen.module.css';
 
 export type BuildingView={lat:number;lng:number;zoom:number};
 export type BuildingControls={recenter:()=>void;view:()=>BuildingView};
-export default function BuildingsMap({initialView,points,position,stale,follow,onDrag,onReady,onError}:{initialView:BuildingView;points:RoutePoint[];position:RoutePoint|null;stale:boolean;follow:boolean;onDrag:()=>void;onReady:(controls:BuildingControls|null)=>void;onError:()=>void}){
+export default function BuildingsMap({initialView,points,position,stale,follow,onDrag,onReady,onError,markerLabel='Tu ubicación'}:{initialView:BuildingView;points:RoutePoint[];position:RoutePoint|null;stale:boolean;follow:boolean;onDrag:()=>void;onReady:(controls:BuildingControls|null)=>void;onError:()=>void;markerLabel?:string}){
   const container=useRef<HTMLDivElement>(null),map=useRef<GLMap|null>(null),marker=useRef<Marker|null>(null);
   const latest=useRef({points,position,stale,follow,onReady,onError,onDrag});latest.current={points,position,stale,follow,onReady,onError,onDrag};
   const [ready,setReady]=useState(false);
@@ -32,7 +32,7 @@ export default function BuildingsMap({initialView,points,position,stale,follow,o
         m.addLayer({id:'journey-line',type:'line',source:'journey',paint:{'line-color':'#1462ed','line-width':5},layout:{'line-cap':'round','line-join':'round'}});
         m.addSource('gps-accuracy',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
         m.addLayer({id:'gps-accuracy',type:'fill',source:'gps-accuracy',paint:{'fill-color':'#418fff','fill-opacity':.12}});
-        const element=document.createElement('div');element.className=styles.positionMarker;element.innerHTML='<span></span><b>Tu ubicación</b>';
+        const element=document.createElement('div');element.className=styles.positionMarker;element.innerHTML='<span></span>';const label=document.createElement('b');label.textContent=markerLabel;element.append(label);
         marker.current=new gl.Marker({element,anchor:'center'});
         container.current?.setAttribute('data-buildings',m.getLayer('building-3d')?'ready':'unavailable');
         latest.current.onReady({recenter:()=>{const p=latest.current.position||latest.current.points.at(-1);if(p)m.jumpTo({center:[p.lng,p.lat]})},view:()=>({lat:m.getCenter().lat,lng:m.getCenter().lng,zoom:m.getZoom()})});

@@ -1,6 +1,6 @@
 export type RoutePoint={lat:number;lng:number;accuracy:number;recorded_at:string};
 export type DriverVehicle={id:number;user_id:string;plate:string;model:string;driver:string};
-export type DriverTrip={id:number;user_id:string;vehicle_id?:number;plate:string;model?:string;driver:string;zone:string;sector:string;started:string;ended:string|null};
+export type DriverTrip={id:number;user_id:string;vehicle_id?:number;collect_zones?:boolean;plate:string;model?:string;driver:string;zone:string;sector:string;started:string;ended:string|null};
 export type DriverData={user:{id:string;name:string;email:string;role:string};vehicles:DriverVehicle[];trips:DriverTrip[]};
 export const routeZones=[
   {id:'urbana',name:'Zona urbana',icon:'🏙️',limit:50},

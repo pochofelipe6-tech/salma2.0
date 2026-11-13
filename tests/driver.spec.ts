@@ -4,11 +4,11 @@ const user={id:'11111111-1111-4111-8111-111111111111',name:'Andrea Pérez',email
 const vehicle={id:1,user_id:user.id,plate:'ABC123',model:'Renault Duster',driver:user.name};
 type GPSWindow=Window&{sendGps:(lat:number,lng:number,speed:number)=>void};
 
-async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,limit=50,label='Zona urbana',zone='urbana',known=true}={}){
+async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,limit=50,label='Zona urbana',zone='urbana',known=true,recording=false}={}){
   await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1cAAAAASUVORK5CYII=','base64')}));
   let vehicles=hasVehicle?[vehicle]:[];
-  let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',model:'Renault Duster',driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
-  const saved:Record<string,unknown>[]=[];
+  let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',model:'Renault Duster',collect_zones:recording,driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
+  const saved:Record<string,unknown>[]=[],surveys:Record<string,unknown>[]=[];
   const events:Record<string,unknown>[]=[];
   let starts=0;
   await page.addInitScript(({denied,accuracy})=>{
@@ -28,6 +28,9 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,a
     const reply=(data:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
     if(action==='state')return reply({user,vehicles,trips:trip?[trip]:[],events});
     if(action==='road')return reply({match:known?{status:'known',reason:'Registrado',roadId:'34377021',roadName:'Carrera 51B',zone,label,limit,source:'OpenStreetMap'}:{status:'unknown',reason:'La vía no tiene límite registrado.',limit:null}});
+    if(action==='survey-count')return reply({count:surveys.length});
+    if(action==='survey'){surveys.push(body);return reply({created:1,count:surveys.length})}
+    if(action==='collect-mode'){if(trip)trip.collect_zones=body.enabled;return reply({ok:true})}
     if(action==='vehicle'){vehicles=[{...vehicle,plate:body.plate,model:body.model}];return reply({id:1})}
     if(action==='start'){starts++;trip={id:7,user_id:user.id,vehicle_id:body.vehicle??null,plate:body.plate,model:body.model,driver:user.name,zone:body.zone||'urbana',sector:body.sector||'Recorrido GPS',started:new Date().toISOString(),ended:null};vehicles=[{...vehicle,plate:body.plate,model:body.model}];return reply({id:7,started:trip.started,plate:body.plate,model:body.model})}
     if(action==='positions'){
@@ -38,7 +41,7 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,a
     if(action==='end'){trip=null;return reply({ok:true})}
     return reply({ok:true});
   });
-  return {saved,events,get starts(){return starts}};
+  return {saved,events,surveys,get starts(){return starts}};
 }
 
 test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',async({page})=>{
@@ -210,11 +213,36 @@ test('el GPS conserva el zoom elegido por el conductor',async({page})=>{
  await expect.poll(async()=>Number(await map.getAttribute('data-center-lat'))).toBeCloseTo(4.6501,4);await expect(map).toHaveAttribute('data-zoom','18');
 });
 
-test('vista 3D muestra edificaciones y permite volver al mapa 2D',async({page})=>{
+test('vista 3D muestra edificaciones y permite volver al mapa 2D',async({page},testInfo)=>{
  await mockDriver(page);await page.goto('/');
  const toggle=page.getByRole('button',{name:'Ver edificaciones en 3D',exact:true});await expect(toggle).toBeEnabled({timeout:20000});
  await toggle.click();const map3d=page.getByRole('img',{name:'Mapa de edificaciones en 3D'});await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:20000});
  await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toHaveCount(0);
- await page.screenshot({path:'artifacts/buildings-3d-preview.png',fullPage:true});
+ await page.screenshot({path:testInfo.outputPath('buildings-3d.png'),fullPage:true});
  await page.getByRole('button',{name:'Ver mapa en 2D',exact:true}).click();await expect(map3d).toHaveCount(0);await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toBeVisible();
+});
+
+test('registro de zonas acompana la ruta y guarda propuestas sin activar alertas nuevas',async({page})=>{
+ const mock=await mockDriver(page,{known:false});await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});
+ await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','true');
+ const startRequest=page.waitForRequest(r=>r.url().endsWith('/api/start'));
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();expect((await startRequest).postDataJSON().collectZones).toBe(true);
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,10));await expect.poll(()=>mock.surveys.length).toBe(1);
+ await expect(page.getByRole('status').filter({hasText:'1 propuestas guardadas'})).toBeVisible();expect(mock.events).toHaveLength(0);
+ await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();await expect(page.getByRole('dialog',{name:'¡Ruta finalizada!'})).toBeVisible();expect(mock.starts).toBe(1);
+});
+test('puede activar el registro durante una ruta y reanudarlo tras recargar',async({page})=>{
+ const mock=await mockDriver(page,{resume:true,recording:true});await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});await expect(toggle).toHaveAttribute('aria-pressed','true');
+ await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','false');await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','true');
+ await page.getByRole('button',{name:'Reanudar GPS',exact:true}).click();await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,0));await expect.poll(()=>mock.surveys.length).toBe(1);expect(mock.starts).toBe(0);
+});
+
+test('desactivar el registro espera el guardado sin recoger nuevas propuestas',async({page})=>{
+ await mockDriver(page);let requests=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve});
+ await page.route('**/api/survey',async route=>{requests++;await gate;return route.fulfill({json:{created:1,count:1}})});
+ await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});await toggle.click();
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,0));await expect.poll(()=>requests).toBe(1);
+ await toggle.click();await expect(toggle).toBeDisabled();await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6502,-74.0802,0));
+ release();await expect(toggle).toHaveAttribute('aria-pressed','false');await expect(toggle).toBeEnabled();expect(requests).toBe(1);
 });

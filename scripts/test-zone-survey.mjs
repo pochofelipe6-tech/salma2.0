@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {surveyCandidates} from '../lib/zone-survey.ts';
+import {PGlite} from '@electric-sql/pglite';
+import {readFile} from 'node:fs/promises';
+const road={id:'test',name:'Calle de prueba',kind:'residential',zone:'escolar',label:'Residencial',limit:null,geometry:[[-75,10.8],[-74.999,10.8],[-74.999,10.801]]};
+const fix={lat:10.8,lng:-74.999,accuracy:5,recorded_at:new Date().toISOString()};
+const candidates=surveyCandidates(road,fix,[{id:'school',name:'Colegio de prueba',coordinates:[-74.999,10.8001]}]);
+assert.equal(candidates.length,3);assert.ok(candidates.some(c=>c.candidate_key.startsWith('curve:')));assert.ok(candidates.some(c=>c.candidate_key.startsWith('school:')));assert.ok(candidates.every(c=>!('status'in c)));
+const db=new PGlite();
+try{
+ await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;
+ create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}');
+ create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+ grant usage on schema auth,public to authenticated,anon,service_role;grant execute on function auth.uid() to authenticated;`);
+ for(const name of ['001_initial.sql','006_automatic_limits.sql','009_route_zone_survey.sql','009_route_zone_survey.sql'])await db.exec(await readFile('supabase/migrations/'+name,'utf8'));
+ const driver='11111111-1111-4111-8111-111111111111',admin='22222222-2222-4222-8222-222222222222',other='33333333-3333-4333-8333-333333333333';
+ for(const id of [driver,admin,other])await db.query('insert into auth.users(id,email) values($1,$2)',[id,id+'@example.invalid']);
+ await db.query("update public.profiles set role='admin' where id=$1",[admin]);
+ async function asUser(id){await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role authenticated')}
+ await asUser(driver);
+ const vehicle=(await db.query("insert into public.vehicles(plate,model) values('SUR123','Prueba') returning id")).rows[0].id;
+ const trip=(await db.query("insert into public.trips(vehicle_id,zone,sector,collect_zones) values($1,'urbana','Registro',true) returning id",[vehicle])).rows[0].id;
+ const c=candidates.find(c=>c.zone==='curvas');
+ const insert=()=>db.query('insert into public.survey_zones(trip_id,candidate_key,name,zone,reason,confidence,source,geometry,lat,lng) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict(trip_id,candidate_key) do nothing returning *',[trip,c.candidate_key,c.name,c.zone,c.reason,c.confidence,c.source,JSON.stringify(c.geometry),c.lat,c.lng]);
+ const zone=(await insert()).rows[0];assert.equal(zone.status,'pending');assert.equal((await insert()).rows.length,0);
+ const match=()=>db.query('select * from public.match_survey_zone(10.8,-74.999,10.8,-74.999)');
+ assert.equal((await match()).rows.length,0);
+ assert.equal((await db.query("update public.survey_zones set status='confirmed',reviewed_by=$1,reviewed_at=now() where id=$2 returning id",[driver,zone.id])).rows.length,0);
+ await asUser(other);assert.equal((await db.query('select * from public.survey_zones')).rows.length,0);
+ await asUser(admin);await db.query("update public.survey_zones set status='confirmed',reviewed_by=$1,reviewed_at=now() where id=$2",[admin,zone.id]);
+ await asUser(other);assert.equal((await match()).rows[0].limit_speed,35);
+ await asUser(driver);
+ const event=(await db.query("insert into public.events(trip_id,survey_zone_id,zone,sector,speed,lat,lng) values($1,$2,'urbana','Manipulado',40,10.8,-74.999) returning *",[trip,zone.id])).rows[0];assert.equal(event.limit_speed,35);assert.equal(event.zone,'curvas');
+ await assert.rejects(db.query("insert into public.events(trip_id,survey_zone_id,zone,sector,speed,lat,lng) values($1,$2,'urbana','GPS',40,10.9,-74.999)",[trip,zone.id]));
+ await db.query('update public.trips set collect_zones=false where id=$1',[trip]);await assert.rejects(insert());
+ await asUser(admin);await db.query("update public.survey_zones set status='rejected',reviewed_by=$1,reviewed_at=now() where id=$2",[admin,zone.id]);
+ assert.equal((await match()).rows.length,0);
+ await db.exec('reset role');await db.query('delete from public.trips where id=$1',[trip]);assert.equal((await db.query('select trip_id from public.survey_zones where id=$1',[zone.id])).rows[0].trip_id,null);
+ console.log('PASS: propuestas de vías/colegios/curvas, migración idempotente, deduplicación, aislamiento, confirmación solo admin, alerta posterior, descarte y conservación al eliminar ruta.');
+}finally{await db.close()}

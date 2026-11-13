@@ -58,3 +58,19 @@ https://docs.tomtom.com/snap-to-roads-api/documentation/snap-to-roads-api/synchr
 ## Clasificacion SST
 
 Se mantiene la identificacion conservadora de tramos. Las vias de categoria residencial se agrupan con escolar/residencial; eso no significa que se haya detectado un colegio. Las vias nacionales requieren referencia 25, 90 o 90A en el mapa, en vez de considerar nacional cualquier avenida principal. La etiqueta urbana del resto de tramos es una clasificacion operativa aproximada del catalogo, no una delimitacion oficial. No hay etiquetas explicitas de curvas ni zonas escolares en el extracto; el umbral de curvas queda configurado, pero no se inventa una deteccion de curva.
+
+## Registrar zonas del recorrido
+
+Aplicar 009_route_zone_survey.sql despues de 008, o el archivo enable-automatic-limits.sql actualizado completo para una instalacion nueva.
+
+El conductor activa Registrar zonas del recorrido y despues Iniciar ruta. Tambien puede activarlo en una ruta abierta. La opcion se conserva en trips.collect_zones para reanudarla al recargar. El GPS de la ruta y el registro de propuestas funcionan juntos; no se inicia un segundo viaje.
+
+Cada cinco segundos como maximo se intenta proponer un tramo inequivoco del catalogo, incluso si no tenia maxspeed numerico. Se guarda un tramo observado de hasta 90 m. La proximidad a un colegio (80 m) y cambios de direccion en la geometria se guardan como posibilidades de confianza baja. Un cambio de direccion puede ser una esquina. Estos indicios NO activan nuevas alertas automaticamente.
+
+En Administrador > Zonas se pueden ver las propuestas, previsualizar la geometria, elegir categoria y margen (5 a 40 m), confirmar o descartar. Confirmar requiere marcar que se verifico el tramo. Las zonas confirmadas se consultan con dos posiciones GPS recientes y tienen prioridad sobre la clasificacion aproximada del catalogo. Si varias zonas confirmadas se superponen, se aplica el menor umbral SST. Descartarlas las excluye de futuros reconocimientos.
+
+Se deduplican las observaciones por ruta y clave de tramo/indicio. Las propuestas sobreviven a la eliminacion del viaje de origen. La cola de propuestas pendiente se mantiene en la memoria de la pestana y se reintenta; una falla de guardado se informa y bloquea el cierre hasta reintentar. No cerrar/recargar con guardados pendientes. No existe almacenamiento offline persistente.
+
+La fuente geografica y la precision siguen limitando la cobertura; guardar un recorrido no demuestra por si solo el limite legal. Este modo no reconoce automaticamente todos los colegios ni todas las curvas.
+
+Pruebas adicionales: npm run test:survey verifica candidatos, aislamiento RLS, solo revision por administrador, ausencia de alertas pendientes, alerta posterior confirmada y descarte.

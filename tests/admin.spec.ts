@@ -142,3 +142,16 @@ test('tarjetas del resumen abren su informacion',async({page})=>{
    const heading=page.getByRole('heading',{name:title,exact:true});await expect(heading).toBeVisible();await expect(heading).toBeFocused();
  }
 });
+
+test('admin revisa y confirma propuestas antes de activar zonas',async({page})=>{
+ await mockAdmin(page);let status='pending';let reviewBody:Record<string,unknown>|null=null;
+ const candidate={id:8,trip_id:2,candidate_key:'curve:test',name:'Posible curva de prueba',zone:'curvas',reason:'Cambio de dirección: requiere revisión',confidence:'baja',source:'OpenStreetMap + recorrido GPS',geometry:[[-74.8,10.98],[-74.7998,10.98]],lat:10.98,lng:-74.8,radius:20,created:new Date().toISOString()};
+ await page.route('**/api/zone-proposals?**',route=>{const filter=new URL(route.request().url()).searchParams.get('status');return route.fulfill({json:{zones:filter===status?[{...candidate,status}]:[],count:filter===status?1:0}})});
+ await page.route('**/api/review-zone',route=>{reviewBody=route.request().postDataJSON();status=String(reviewBody!.status);return route.fulfill({json:{ok:true}})});
+ await page.goto('/');await page.getByRole('button',{name:'Zonas',exact:true}).click();await expect(page.getByRole('heading',{name:'Zonas de los recorridos',exact:true,level:2})).toBeVisible();await expect(page.getByRole('heading',{name:'Posible curva de prueba'})).toBeVisible();
+ await page.getByLabel('Categoría SST',{exact:true}).selectOption('curvas');await page.getByLabel('Margen alrededor del tramo (m)',{exact:true}).fill('15');
+ await page.getByRole('button',{name:'Confirmar zona',exact:true}).click();expect(reviewBody).toBeNull();
+ await page.getByRole('checkbox').check();await page.getByRole('button',{name:'Confirmar zona',exact:true}).click();await expect(page.getByRole('heading',{name:'Posible curva de prueba'})).toHaveCount(0);
+ expect(reviewBody).toEqual({id:8,status:'confirmed',zone:'curvas',radius:15});
+ await page.getByLabel('Estado',{exact:true}).selectOption('confirmed');await expect(page.getByRole('heading',{name:'Posible curva de prueba'})).toBeVisible();
+});

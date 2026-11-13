@@ -16,7 +16,7 @@ export function distanceToRoad(p:RoadFix,geometry:number[][]){
   return best;
 }
 // Índice por celdas; incluye también vías SIN límite para no elegir otra más lejana.
-export function createRoadMatcher(roads:MapRoad[]){
+export function createRoadMatcher(roads:MapRoad[],options:{survey?:boolean}={}){
   const size=.002,index=new Map<string,MapRoad[]>();
   for(const road of roads){
     const xs=road.geometry.map(p=>p[0]),ys=road.geometry.map(p=>p[1]);
@@ -34,9 +34,9 @@ export function createRoadMatcher(roads:MapRoad[]){
     // Evitar inventar el carril/vía en cruces, vías paralelas y pasos a diferente nivel.
     const rival=candidates.find(c=>c.road.id!==best.road.id&&c.distance-best.distance<Math.max(8,fix.accuracy));
     if(rival)return unknown('Ubicación ambigua entre varias vías. Esperando una posición más clara.');
-    if(!best.road.limit)return {...unknown('La vía no tiene un límite fijo utilizable en el mapa.'),roadName:best.road.name};
+    if(!best.road.limit&&!options.survey)return {...unknown('La vía no tiene un límite fijo utilizable en el mapa.'),roadName:best.road.name};
     if(!previous||previous.accuracy>25||Date.parse(fix.recorded_at)-Date.parse(previous.recorded_at)>15000||Date.parse(fix.recorded_at)<=Date.parse(previous.recorded_at))return unknown('Confirmando el tramo con varias posiciones GPS.');
     if(distanceToRoad(previous,best.road.geometry)>Math.min(30,previous.accuracy+10))return unknown('Cambio de tramo: confirmando el nuevo límite.');
-    return {status:'known',reason:'Límite preventivo SST por categoría del tramo.',roadId:best.road.id,roadName:best.road.name,zone:best.road.zone,label:({urbana:'Zona urbana',nacional:'Vía nacional',curvas:'Curvas',escolar:'Escolar / residencial'} as Record<string,string>)[best.road.zone],limit:zones[best.road.zone],postedLimit:best.road.limit,source:'OpenStreetMap'};
+    return {status:'known',reason:'Límite preventivo SST por categoría del tramo.',roadId:best.road.id,roadName:best.road.name,zone:best.road.zone,label:({urbana:'Zona urbana',nacional:'Vía nacional',curvas:'Curvas',escolar:'Escolar / residencial'} as Record<string,string>)[best.road.zone],limit:zones[best.road.zone],postedLimit:best.road.limit??undefined,source:'OpenStreetMap'};
   };
 }
