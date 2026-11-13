@@ -223,7 +223,7 @@ test('vista 3D muestra edificaciones y permite volver al mapa 2D',async({page},t
 });
 
 test('registro de zonas acompana la ruta y guarda propuestas sin activar alertas nuevas',async({page})=>{
- const mock=await mockDriver(page,{known:false});await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});
+ const mock=await mockDriver(page,{known:false});await page.goto('/');const toggle=page.getByRole('button',{name:/registro de zonas|Guardando/,exact:false});
  await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','true');
  const startRequest=page.waitForRequest(r=>r.url().endsWith('/api/start'));
  await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();expect((await startRequest).postDataJSON().collectZones).toBe(true);
@@ -232,7 +232,7 @@ test('registro de zonas acompana la ruta y guarda propuestas sin activar alertas
  await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();await expect(page.getByRole('dialog',{name:'¡Ruta finalizada!'})).toBeVisible();expect(mock.starts).toBe(1);
 });
 test('puede activar el registro durante una ruta y reanudarlo tras recargar',async({page})=>{
- const mock=await mockDriver(page,{resume:true,recording:true});await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});await expect(toggle).toHaveAttribute('aria-pressed','true');
+ const mock=await mockDriver(page,{resume:true,recording:true});await page.goto('/');const toggle=page.getByRole('button',{name:/registro de zonas|Guardando/,exact:false});await expect(toggle).toHaveAttribute('aria-pressed','true');
  await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','false');await toggle.click();await expect(toggle).toHaveAttribute('aria-pressed','true');
  await page.getByRole('button',{name:'Reanudar GPS',exact:true}).click();await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,0));await expect.poll(()=>mock.surveys.length).toBe(1);expect(mock.starts).toBe(0);
 });
@@ -240,7 +240,7 @@ test('puede activar el registro durante una ruta y reanudarlo tras recargar',asy
 test('desactivar el registro espera el guardado sin recoger nuevas propuestas',async({page})=>{
  await mockDriver(page);let requests=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve});
  await page.route('**/api/survey',async route=>{requests++;await gate;return route.fulfill({json:{created:1,count:1}})});
- await page.goto('/');const toggle=page.getByRole('button',{name:'Registrar zonas del recorrido',exact:false});await toggle.click();
+ await page.goto('/');const toggle=page.getByRole('button',{name:/registro de zonas|Guardando/,exact:false});await toggle.click();
  await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
  await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,0));await expect.poll(()=>requests).toBe(1);
  await toggle.click();await expect(toggle).toBeDisabled();await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6502,-74.0802,0));
