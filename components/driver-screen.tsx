@@ -13,7 +13,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   useEffect(()=>{if(completion){completionDialog.current?.showModal();const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}}},[completion]);
   const initial=data.trips.find(t=>t.user_id===data.user.id&&!t.ended)||null;
   const [trip,setTrip]=useState<DriverTrip|null>(initial),[tracking,setTracking]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saveError,setSaveError]=useState(''),[position,setPosition]=useState<RoutePoint|null>(null),[points,setPoints]=useState<RoutePoint[]>([]),[speed,setSpeed]=useState<number|null>(null),[gps,setGps]=useState('GPS desconectado'),[stale,setStale]=useState(true),[now,setNow]=useState(Date.now()),[finished,setFinished]=useState(false);
-  const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
+  const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),lastSaveFailure=useRef(''),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
   tripRef.current=trip;
   const [road,setRoad]=useState<RoadMatch>({status:'unknown',reason:'Inicia la ruta para detectar el tramo.',limit:null});
   const previousFix=useRef<RoadFix|null>(null),lookupVersion=useRef(0),lastSound=useRef(0),alertedRoad=useRef('');
@@ -29,7 +29,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   useEffect(()=>{
     if(!initial?.id||tracking||busy||finished)return;
     let cancelled=false;
-    void routeApi(`positions?trip=${initial.id}`).then(result=>{if(!cancelled){const stored=result.points as RoutePoint[];setPoints(previous=>{const merged=new Map([...stored,...previous].map(p=>[p.recorded_at,p]));return [...merged.values()].sort((a,b)=>Date.parse(a.recorded_at)-Date.parse(b.recorded_at))});setPosition(previous=>previous||stored.at(-1)||null)}}).catch(()=>{if(!cancelled)setSaveError('No se pudo recuperar el recorrido guardado. Puedes reanudar el GPS.')});
+    void routeApi(`positions?trip=${initial.id}`).then(result=>{if(!cancelled){const stored=result.points as RoutePoint[];setPoints(previous=>{const merged=new Map([...stored,...previous].map(p=>[p.recorded_at,p]));return [...merged.values()].sort((a,b)=>Date.parse(a.recorded_at)-Date.parse(b.recorded_at))});setPosition(previous=>previous||stored.at(-1)||null)}}).catch(e=>{if(!cancelled)setSaveError(lastSaveFailure.current||(e as Error).message||'No se pudo recuperar el recorrido guardado.')});
     return()=>{cancelled=true};
   },[initial?.id,tracking,busy,finished]);
   useEffect(()=>{
@@ -48,8 +48,8 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
         await routeApi('positions',{trip:current.id,points:batch});
         queue.current.splice(0,batch.length);
       }
-      if(mounted.current)setSaveError('');return true;
-    }catch{if(mounted.current)setSaveError('El recorrido se ve en vivo, pero hay posiciones pendientes de guardar. Revisa tu conexión o la migración 002 de Supabase.');return false}
+      lastSaveFailure.current='';if(mounted.current)setSaveError('');return true;
+    }catch(e){lastSaveFailure.current=(e as Error).message||'No se pudieron guardar las posiciones GPS.';if(mounted.current)setSaveError(lastSaveFailure.current);return false}
     finally{flushing.current=false}
   }
   useEffect(()=>{if(!tracking)return;const timer=setInterval(()=>{void flush()},7000);return()=>clearInterval(timer)},[tracking]);
@@ -134,7 +134,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     if(watch.current!==null)navigator.geolocation.clearWatch(watch.current);watch.current=null;lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'Ruta finalizada.',limit:null});setTracking(false);setSpeed(null);setStale(true);
     try{
       if(flushing.current)throw new Error('Se está guardando el recorrido. Espera un momento y vuelve a finalizar.');
-      if(!await flush())throw new Error('Hay posiciones pendientes de guardar. Revisa la conexión y vuelve a finalizar.');
+      if(!await flush())throw new Error(lastSaveFailure.current+' Mantén esta pestaña abierta y vuelve a finalizar después de corregirlo.');
       if(sendingEvent.current)throw new Error('Se está guardando una alerta. Espera un momento y vuelve a finalizar.');
       await routeApi('end',{trip:trip.id});setCompletion({distance:distance.toFixed(2),duration:[Math.floor((Date.now()-Date.parse(trip.started))/3600000),Math.floor((Date.now()-Date.parse(trip.started))/60000)%60,Math.floor((Date.now()-Date.parse(trip.started))/1000)%60].map(n=>String(Math.max(0,n)).padStart(2,'0')).join(':'),count:new Set(points.map(p=>p.recorded_at)).size,plate:trip.plate});setTrip(null);tripRef.current=null;setGps('Ruta finalizada');setFinished(true);await onRefresh();
     }catch(e){setError((e as Error).message)}finally{setBusy(false)}

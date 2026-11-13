@@ -103,3 +103,9 @@ Una respuesta 503 de /api/state indica un problema del servidor; sin sesion y co
 ## Deteccion automatica en Atlantico
 
 La nueva version consulta limites por tramo con el GPS y el catalogo OSM incluido. Ejecutar `supabase/enable-automatic-limits.sql` en Supabase antes de guardar eventos automaticos. Ver [docs/automatic-speed-limits.md](docs/automatic-speed-limits.md) para activar, actualizar datos y conocer la cobertura. No requiere una API de mapas de pago. Los tramos sin dato se muestran como limite no disponible.
+
+## Mapa vectorial
+
+El mapa usa MapLibre GL con OpenFreeMap (estilo Liberty) para calles y etiquetas nitidas al ampliar, sin clave API. Conserva el zoom del usuario durante el seguimiento GPS e incluye escala y pantalla completa. Si el dispositivo no puede cargar la vista vectorial, usa el mapa estandar con sobrezoom hasta nivel 21. Requiere conexion para cargar datos del mapa y conserva la atribucion de OpenFreeMap, OpenMapTiles y OpenStreetMap. Esta mejora visual no agrega datos de curvas al detector SST.
+
+La vista opcional de edificaciones 3D usa la capa building-3d de OpenFreeMap con perspectiva inclinada, controles y trazado GPS propios. Las formas y alturas dependen del mapa y no representan una reconstruccion fotografica exacta. Mostrar colegios o curvas en el mapa no activa por si solo su deteccion como zona SST.

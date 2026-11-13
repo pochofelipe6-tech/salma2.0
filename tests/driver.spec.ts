@@ -5,6 +5,7 @@ const vehicle={id:1,user_id:user.id,plate:'ABC123',model:'Renault Duster',driver
 type GPSWindow=Window&{sendGps:(lat:number,lng:number,speed:number)=>void};
 
 async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,limit=50,label='Zona urbana',zone='urbana',known=true}={}){
+  await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1cAAAAASUVORK5CYII=','base64')}));
   let vehicles=hasVehicle?[vehicle]:[];
   let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',model:'Renault Duster',driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
   const saved:Record<string,unknown>[]=[];
@@ -70,7 +71,7 @@ test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',asy
   await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6509,-74.0795,50/3.6));
   await expect(warning).toHaveCount(0);
   await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();
-  await expect(page.getByRole('status').filter({hasText:'Ruta finalizada.'})).toBeVisible();
+  await expect(page.getByRole('status').filter({hasText:'Ruta finalizada. Tu viaje'})).toBeVisible();
   const completion=page.getByRole('dialog',{name:'¡Ruta finalizada!'});
   await expect(completion).toBeVisible();
   await expect(completion.getByText('3',{exact:true})).toBeVisible();
@@ -181,4 +182,39 @@ test('el limite cambia automaticamente durante la misma ruta y se suspende sin d
  await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,10));await expect(page.getByText('50 km/h · Vía principal',{exact:true})).toBeVisible();await expect(warning).toHaveCount(0);
  await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.0795,10));await expect(warning).toBeVisible();await expect(warning).toContainText('Calle residencial');await expect(warning).toContainText('30 km/h');await expect(page.locator('[data-zone="escolar"][data-active="true"]')).toContainText('Zona actual');await expect(page.locator('[data-zone="urbana"][data-active="true"]')).toHaveCount(0);
  await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.0785,10));await expect(warning).toHaveCount(0);await expect(page.getByText('Límite no disponible',{exact:true})).toBeVisible();await expect(page.locator('[data-active="true"]')).toHaveCount(0);
+});
+
+test('conserva posiciones y permite finalizar tras reparar la tabla GPS',async({page})=>{
+ const mock=await mockDriver(page);let repaired=false;let savedAfterRepair=0;let ends=0;
+ await page.route('**/api/positions',route=>{
+  if(!repaired)return route.fulfill({status:503,json:{error:'Ejecuta supabase/migrations/002_route_points.sql para guardar el recorrido.'}});
+  if(route.request().method()==='GET')return route.fulfill({json:{points:[]}});
+  savedAfterRepair+=route.request().postDataJSON().points.length;return route.fulfill({json:{ok:true}});
+ });
+ await page.route('**/api/end',route=>{ends++;return route.fulfill({json:{ok:true}})});
+ await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'002_route_points.sql'})).toBeVisible();
+ await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();
+ await expect(page.getByRole('alert').filter({hasText:'002_route_points.sql'})).toBeVisible();expect(ends).toBe(0);
+ repaired=true;
+ await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();await expect(page.getByRole('dialog',{name:'¡Ruta finalizada!'})).toBeVisible();
+ expect(savedAfterRepair).toBe(1);expect(ends).toBe(1);expect(mock.starts).toBe(1);
+});
+
+test('el GPS conserva el zoom elegido por el conductor',async({page})=>{
+ await mockDriver(page);await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ const map=page.getByRole('img',{name:'Mapa del recorrido GPS'});await expect(map).toHaveAttribute('data-center-lat');
+ await page.getByTitle('Acercar mapa',{exact:true}).click();await expect(map).toHaveAttribute('data-zoom','17');await page.getByTitle('Acercar mapa',{exact:true}).click();
+ await expect.poll(async()=>Number(await map.getAttribute('data-zoom'))).toBe(18);
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6501,-74.0801,0));
+ await expect.poll(async()=>Number(await map.getAttribute('data-center-lat'))).toBeCloseTo(4.6501,4);await expect(map).toHaveAttribute('data-zoom','18');
+});
+
+test('vista 3D muestra edificaciones y permite volver al mapa 2D',async({page})=>{
+ await mockDriver(page);await page.goto('/');
+ const toggle=page.getByRole('button',{name:'Ver edificaciones en 3D',exact:true});await expect(toggle).toBeEnabled({timeout:20000});
+ await toggle.click();const map3d=page.getByRole('img',{name:'Mapa de edificaciones en 3D'});await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:20000});
+ await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toHaveCount(0);
+ await page.screenshot({path:'artifacts/buildings-3d-preview.png',fullPage:true});
+ await page.getByRole('button',{name:'Ver mapa en 2D',exact:true}).click();await expect(map3d).toHaveCount(0);await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toBeVisible();
 });
