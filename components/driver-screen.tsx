@@ -12,7 +12,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   useEffect(()=>{if(completion){completionDialog.current?.showModal();const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}}},[completion]);
   const initial=data.trips.find(t=>t.user_id===data.user.id&&!t.ended)||null;
   const [trip,setTrip]=useState<DriverTrip|null>(initial),[tracking,setTracking]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saveError,setSaveError]=useState(''),[position,setPosition]=useState<RoutePoint|null>(null),[points,setPoints]=useState<RoutePoint[]>([]),[speed,setSpeed]=useState<number|null>(null),[gps,setGps]=useState('GPS desconectado'),[stale,setStale]=useState(true),[now,setNow]=useState(Date.now()),[finished,setFinished]=useState(false);
-  const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),over=useRef(false),sendingEvent=useRef(false),lastBeep=useRef(0),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
+  const watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),over=useRef(false),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
   tripRef.current=trip;
   const limit=routeZones.find(z=>z.id===(trip?.zone||'urbana'))?.limit||50;
   const excess=tracking&&!stale&&speed!==null&&speed>limit;
@@ -48,7 +48,20 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     finally{flushing.current=false}
   }
   useEffect(()=>{if(!tracking)return;const timer=setInterval(()=>{void flush()},7000);return()=>clearInterval(timer)},[tracking]);
-  function beep(){try{const ctx=audio.current;if(!ctx)return;const oscillator=ctx.createOscillator(),gain=ctx.createGain();oscillator.connect(gain);gain.connect(ctx.destination);oscillator.frequency.value=880;gain.gain.value=.12;oscillator.start();oscillator.stop(ctx.currentTime+.35)}catch{}}
+  function beep(){
+    try{const ctx=audio.current;if(!ctx||ctx.state!=='running')return;
+      for(let i=0;i<3;i++){
+        const oscillator=ctx.createOscillator(),gain=ctx.createGain(),start=ctx.currentTime+i*.24;
+        oscillator.connect(gain);gain.connect(ctx.destination);oscillator.type='sine';oscillator.frequency.setValueAtTime(i===1?1040:780,start);
+        gain.gain.setValueAtTime(0,start);gain.gain.linearRampToValueAtTime(.16,start+.02);gain.gain.exponentialRampToValueAtTime(.001,start+.18);
+        oscillator.start(start);oscillator.stop(start+.2);oscillator.onended=()=>{oscillator.disconnect();gain.disconnect()};
+      }
+    }catch{}
+  }
+  useEffect(()=>{
+    if(!excess)return;
+    beep();const timer=setInterval(()=>beep(),5000);return()=>clearInterval(timer);
+  },[excess]);
   function receive(p:GeolocationPosition){
     if(!mounted.current||!tripRef.current)return;
     if(!Number.isFinite(p.coords.latitude)||Math.abs(p.coords.latitude)>90||!Number.isFinite(p.coords.longitude)||Math.abs(p.coords.longitude)>180||!Number.isFinite(p.coords.accuracy)||p.coords.accuracy<0){setStale(true);setSpeed(null);setGps('Ubicación no disponible · buscando GPS');return}
@@ -65,7 +78,6 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const current=tripRef.current,currentLimit=routeZones.find(z=>z.id===current.zone)!.limit;
     if(km===null){setGps('GPS conectado · velocidad no disponible');return}
     if(km>currentLimit){
-      if(Date.now()-lastBeep.current>5000){beep();lastBeep.current=Date.now()}
       if(!over.current&&!sendingEvent.current){
         sendingEvent.current=true;
         try{if('Notification' in window&&Notification.permission==='granted')new Notification('Reduce la velocidad',{body:`${Math.round(km)} km/h · límite ${currentLimit} km/h`})}catch{}
@@ -113,6 +125,17 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   }
 
   return <div className={styles.screen}>
+    {excess&&<aside className={styles.speedAlertOverlay} role="alert" aria-labelledby="speed-alert-title" aria-describedby="speed-alert-description">
+      <div className={styles.speedAlertCard}>
+        <div className={styles.speedAlertSymbol}><AlertTriangle size={58} strokeWidth={2.5}/></div>
+        <span className={styles.speedAlertEyebrow}>ALERTA DE SEGURIDAD VIAL</span>
+        <h2 id="speed-alert-title">¡Exceso de velocidad!</h2>
+        <p id="speed-alert-description">Reduce la velocidad de forma gradual.<br/>Tu seguridad es lo primero.</p>
+        <div className={styles.speedAlertMetrics}><div><span>VELOCIDAD ACTUAL</span><strong>{Math.round(speed!)}<small>km/h</small></strong></div><div><span>LÍMITE DE TU ZONA</span><strong>{limit}<small>km/h</small></strong></div></div>
+        <div className={styles.speedAlertFooter}><Volume2 size={18}/>Alerta sonora activa</div>
+        <small className={styles.speedAlertNote}>Se cierra automáticamente al volver al límite.</small>
+      </div>
+    </aside>}
     <dialog ref={completionDialog} className={styles.completionDialog} aria-labelledby="completion-title" aria-describedby="completion-description" onClose={()=>setCompletion(null)}>
       {completion&&<div className={styles.completionContent}>
         <div className={styles.completionSparkles} aria-hidden="true"/>

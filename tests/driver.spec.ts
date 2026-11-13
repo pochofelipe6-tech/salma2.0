@@ -63,16 +63,20 @@ test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',asy
   await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toHaveAttribute('data-points','2');
   await expect(page.getByText('Reduce la velocidad',{exact:true})).toBeVisible();
   await expect.poll(()=>mock.events.length).toBe(1);
+  const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
+  await expect(warning).toBeVisible();await expect(warning).toContainText('72');await expect(warning).toContainText('50');
   await page.screenshot({path:'artifacts/driver-active.png',fullPage:true});
+  await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6509,-74.0795,50/3.6));
+  await expect(warning).toHaveCount(0);
   await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('Ruta finalizada.');
   const completion=page.getByRole('dialog',{name:'¡Ruta finalizada!'});
   await expect(completion).toBeVisible();
-  await expect(completion.getByText('2',{exact:true})).toBeVisible();
+  await expect(completion.getByText('3',{exact:true})).toBeVisible();
   await page.screenshot({path:'artifacts/route-completed.png',fullPage:true});
   await completion.getByRole('button',{name:'Aceptar',exact:true}).click();
   await expect(completion).not.toBeVisible();
-  expect(mock.saved).toHaveLength(2);
+  expect(mock.saved).toHaveLength(3);
   expect(mock.starts).toBe(1);
 });
 
