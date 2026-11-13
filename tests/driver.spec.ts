@@ -4,7 +4,7 @@ const user={id:'11111111-1111-4111-8111-111111111111',name:'Andrea Pérez',email
 const vehicle={id:1,user_id:user.id,plate:'ABC123',model:'Renault Duster',driver:user.name};
 type GPSWindow=Window&{sendGps:(lat:number,lng:number,speed:number)=>void};
 
-async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8}={}){
+async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,limit=50,label='Zona urbana',zone='urbana',known=true}={}){
   let vehicles=hasVehicle?[vehicle]:[];
   let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',model:'Renault Duster',driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
   const saved:Record<string,unknown>[]=[];
@@ -26,6 +26,7 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,a
     const body=request.method()==='POST'?request.postDataJSON():null;
     const reply=(data:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
     if(action==='state')return reply({user,vehicles,trips:trip?[trip]:[],events});
+    if(action==='road')return reply({match:known?{status:'known',reason:'Registrado',roadId:'34377021',roadName:'Carrera 51B',zone,label,limit,source:'OpenStreetMap'}:{status:'unknown',reason:'La vía no tiene límite registrado.',limit:null}});
     if(action==='vehicle'){vehicles=[{...vehicle,plate:body.plate,model:body.model}];return reply({id:1})}
     if(action==='start'){starts++;trip={id:7,user_id:user.id,vehicle_id:body.vehicle??null,plate:body.plate,model:body.model,driver:user.name,zone:body.zone||'urbana',sector:body.sector||'Recorrido GPS',started:new Date().toISOString(),ended:null};vehicles=[{...vehicle,plate:body.plate,model:body.model}];return reply({id:7,started:trip.started,plate:body.plate,model:body.model})}
     if(action==='positions'){
@@ -65,11 +66,11 @@ test('conductor ve solo su ruta, mapa y límites; inicia, dibuja y finaliza',asy
   await expect.poll(()=>mock.events.length).toBe(1);
   const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
   await expect(warning).toBeVisible();await expect(warning).toContainText('72');await expect(warning).toContainText('50');
-  await page.screenshot({path:'artifacts/driver-active.png',fullPage:true});
+  await page.screenshot({path:'artifacts/driver-active-zones.png',fullPage:true});
   await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6509,-74.0795,50/3.6));
   await expect(warning).toHaveCount(0);
   await page.getByRole('button',{name:'Finalizar ruta',exact:true}).click();
-  await expect(page.getByRole('status')).toContainText('Ruta finalizada.');
+  await expect(page.getByRole('status').filter({hasText:'Ruta finalizada.'})).toBeVisible();
   const completion=page.getByRole('dialog',{name:'¡Ruta finalizada!'});
   await expect(completion).toBeVisible();
   await expect(completion.getByText('3',{exact:true})).toBeVisible();
@@ -139,4 +140,45 @@ test('centra el marcador en las coordenadas recibidas y vuelve tras desplazar el
  await page.getByRole('button',{name:'Centrar en mi ubicación'}).click();
  await expect.poll(async()=>Number(await map.getAttribute('data-center-lat'))).toBeCloseTo(50.18036,3);
  await expect(page.getByRole('button',{name:'Volver a mi ubicación'})).toHaveCount(0);
+});
+
+for(const zone of [{id:'urbana',name:'Zona urbana',limit:50},{id:'nacional',name:'Vía nacional',limit:70},{id:'curvas',name:'Curvas',limit:35},{id:'escolar',name:'Escolar / residencial',limit:30}]){
+ test('alerta usa el limite y nombre de '+zone.id,async({page})=>{
+  const mock=await mockDriver(page,{limit:zone.limit,label:zone.name,zone:zone.id});await page.goto('/');
+  await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+  await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+  await expect(page.getByLabel('Tipo de zona',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Finalizar ruta',exact:true})).toBeVisible();
+  const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
+  await page.evaluate(limit=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,(limit-1)/3.6),zone.limit);await expect(warning).toHaveCount(0);
+  await page.evaluate(limit=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,(limit+5)/3.6),zone.limit);
+  await expect(page.locator(`[data-zone="${zone.id}"][data-active="true"]`)).toContainText('Zona actual');
+  await expect(page.locator('[data-active="true"]')).toHaveCount(1);
+  await expect(warning).toBeVisible();await expect(warning).toContainText(zone.name);await expect(warning).toContainText(zone.limit+' km/h');
+  await expect.poll(()=>mock.events.length).toBe(1);expect(mock.events[0].speed).toBeGreaterThan(zone.limit);expect(mock.events[0].fix).toBeTruthy();
+  await page.evaluate(limit=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,(limit-1)/3.6),zone.limit);await expect(warning).toHaveCount(0);
+ });
+}
+
+test('sin limite identificado no inventa alerta ni exige seleccion manual',async({page})=>{
+ const mock=await mockDriver(page,{known:false});await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,30));
+ await expect(page.getByText('Límite no disponible',{exact:true})).toBeVisible();await expect(page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'})).toHaveCount(0);expect(mock.events).toHaveLength(0);
+});
+
+test('el limite cambia automaticamente durante la misma ruta y se suspende sin datos',async({page})=>{
+ await mockDriver(page);
+ await page.route('**/api/road',route=>{
+  const {fix}=route.request().postDataJSON();const limit=fix.lng< -74.0798?50:fix.lng< -74.079?30:null;
+  return route.fulfill({json:{match:limit?{status:'known',roadId:String(limit),roadName:limit===50?'Avenida principal':'Calle residencial',zone:limit===50?'urbana':'escolar',label:limit===50?'Vía principal':'Vía residencial',limit,source:'OpenStreetMap'}:{status:'unknown',reason:'Sin dato registrado',limit:null}}});
+ });
+ await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,10));await expect(page.getByText('50 km/h · Vía principal',{exact:true})).toBeVisible();await expect(warning).toHaveCount(0);
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.0795,10));await expect(warning).toBeVisible();await expect(warning).toContainText('Calle residencial');await expect(warning).toContainText('30 km/h');await expect(page.locator('[data-zone="escolar"][data-active="true"]')).toContainText('Zona actual');await expect(page.locator('[data-zone="urbana"][data-active="true"]')).toHaveCount(0);
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.0785,10));await expect(warning).toHaveCount(0);await expect(page.getByText('Límite no disponible',{exact:true})).toBeVisible();await expect(page.locator('[data-active="true"]')).toHaveCount(0);
 });

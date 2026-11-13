@@ -5,7 +5,7 @@ import type * as Leaflet from 'leaflet';
 import type {RoutePoint} from '../lib/route-types';
 import styles from './driver-screen.module.css';
 
-export default function RouteMap({points,position,tracking,stale}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean}){
+export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string}){
   const container=useRef<HTMLDivElement>(null),map=useRef<Leaflet.Map|null>(null),line=useRef<Leaflet.Polyline|null>(null),marker=useRef<Leaflet.Marker|null>(null),accuracy=useRef<Leaflet.Circle|null>(null),centered=useRef(false);
   const latest=useRef({points,position});latest.current={points,position};
   const [ready,setReady]=useState(0),[follow,setFollow]=useState(true),[tilesError,setTilesError]=useState(false);
@@ -51,6 +51,7 @@ export default function RouteMap({points,position,tracking,stale}:{points:RouteP
   return <div className={styles.mapFrame}>
     <div ref={container} className={styles.mapCanvas} role="img" aria-label="Mapa del recorrido GPS" data-points={points.length}/>
     <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
+    {zoneLabel&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}
     <button className={styles.recenter} aria-label="Centrar en mi ubicación" disabled={!position&&!points.length} onClick={()=>{setFollow(true);centerOnPosition()}}><LocateFixed size={19}/></button>
     {!follow&&position&&<button className={styles.followAgain} onClick={()=>{setFollow(true);centerOnPosition()}}>Volver a mi ubicación</button>}
     {!position&&!points.length&&<div className={styles.mapPlaceholder}><span><MapPin size={26}/></span><b>Tu próximo camino empieza aquí</b><p>Inicia tu ruta y permite el GPS para ver<br/>tu ubicación y el recorrido en el mapa.</p></div>}

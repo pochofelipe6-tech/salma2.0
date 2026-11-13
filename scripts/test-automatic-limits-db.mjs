@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+const db=new PGlite();
+try{
+  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
+    create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}');
+    create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    grant usage on schema auth,public to authenticated,anon,service_role;grant execute on function auth.uid() to authenticated;`);
+  for(const name of ['001_initial.sql','006_automatic_limits.sql','006_automatic_limits.sql','007_atlantico_road_catalog.sql'])await db.exec(await readFile('supabase/migrations/'+name,'utf8'));
+  assert.equal((await db.query('select count(*)::int n from public.road_limits')).rows[0].n,2921);
+  await db.exec(`insert into public.road_limits values('test-road','Tramo de prueba','urbana',40,'[[-75,10.8],[-74.99,10.8]]');
+    insert into auth.users(id,email) values('11111111-1111-4111-8111-111111111111','test@example.invalid');
+    select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',false);set role authenticated;`);
+  const v=(await db.query("insert into public.vehicles(plate,model) values('TST123','Prueba') returning id")).rows[0].id;
+  const trip=(await db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','GPS') returning id",[v])).rows[0].id;
+  const insert=(speed,lat=10.8)=>db.query("insert into public.events(trip_id,road_id,zone,sector,speed,lat,lng) values($1,'test-road','nacional','Manipulado',$2,$3,-74.995) returning *",[trip,speed,lat]);
+  const event=(await insert(45)).rows[0];assert.equal(event.limit_speed,40);assert.equal(event.zone,'urbana');assert.equal(event.sector,'Tramo de prueba');
+  await assert.rejects(insert(40));await assert.rejects(insert(55,10.9));
+  await assert.rejects(db.exec("update public.road_limits set limit_speed=100 where id='test-road'"));
+  await db.query('update public.trips set ended=now() where id=$1',[trip]);await assert.rejects(insert(45));
+  await db.exec('reset role');
+  await db.exec(await readFile('supabase/migrations/008_sst_zone_limits.sql','utf8'));
+  await db.exec(await readFile('supabase/migrations/008_sst_zone_limits.sql','utf8'));
+  const wrong=await db.query("select id from public.road_limits where id<>'test-road' and limit_speed<>case zone when 'urbana' then 50 when 'nacional' then 70 when 'curvas' then 35 when 'escolar' then 30 end");assert.equal(wrong.rows.length,0);
+  const mapped=(await db.query("select * from public.road_limits where zone='urbana' and posted_limit=40 and id<>'test-road' limit 1")).rows[0];assert.ok(mapped);assert.equal(mapped.limit_speed,50);
+  await db.exec('set role authenticated');
+  const activeTrip=(await db.query("insert into public.trips(vehicle_id,zone,sector) values($1,'urbana','GPS SST') returning id",[v])).rows[0].id;
+  const [lng,lat]=mapped.geometry[0];
+  const sstInsert=speed=>db.query("insert into public.events(trip_id,road_id,zone,sector,speed,lat,lng) values($1,$2,'nacional','GPS',$3,$4,$5) returning *",[activeTrip,mapped.id,speed,lat,lng]);
+  await assert.rejects(sstInsert(50));assert.equal((await sstInsert(51)).rows[0].limit_speed,50);
+  console.log('PASS: migraciones idempotentes, catálogo real, límite calculado por BD, posición fuera de tramo, viaje cerrado y catálogo protegido.');
+}finally{await db.close()}

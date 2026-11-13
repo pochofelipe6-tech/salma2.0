@@ -13,7 +13,9 @@
     "test:db": "node scripts/test-database.mjs",
     "check:supabase": "node scripts/check-supabase.mjs",
     "test:origin": "node --test scripts/test-origin.mjs",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "maps:build": "node scripts/build-road-catalog.mjs",
+    "test:maps": "node scripts/test-road-matcher.mjs && node scripts/test-automatic-limits-db.mjs"
   },
   "keywords": [],
   "author": "",

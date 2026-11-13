@@ -1,0 +1,23 @@
+{
+  "region": "Atlántico, Colombia",
+  "downloadedAt": "2026-11-13T15:58:27.599Z",
+  "source": "https://download.geofabrik.de/south-america/colombia.html",
+  "boundarySource": "https://nominatim.openstreetmap.org",
+  "boundaryOsmId": 1315209,
+  "license": "ODbL-1.0",
+  "attribution": "© OpenStreetMap contributors",
+  "roadWays": 35168,
+  "schoolObjects": 380,
+  "roadsWithMaxspeedTag": 2922,
+  "roadsWithNumericMaxspeed": 2921,
+  "roadsWithConditionalLimit": 0,
+  "roadsWithSchoolZoneTag": 0,
+  "notes": [
+    "Conteos de objetos OSM, no kilómetros ni colegios necesariamente únicos.",
+    "Incluye vías que intersectan el departamento; no recorta sus geometrías al borde.",
+    "Los polígonos escolares no equivalen a una zona de velocidad alrededor del colegio.",
+    "Faltan posibles colegios representados por relaciones OSM.",
+    "La clasificación de vía no demuestra un límite legal; no se inventan límites para datos ausentes.",
+    "Este extracto no activa la detección automática de la aplicación."
+  ]
+}

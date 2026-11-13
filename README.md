@@ -99,3 +99,7 @@ En el proyecto Vercel, abre Settings > Environment Variables y agrega para Produ
 Usa los valores del mismo proyecto que en .env.local, sin comillas. El archivo .env.local no se publica en Git. Tambien se admite NEXT_PUBLIC_SUPABASE_ANON_KEY para proyectos que usen la clave anon.
 Despues abre Deployments > Redeploy para aplicar las variables. Configura en Supabase Authentication > URL Configuration el dominio de produccion y su ruta /auth/callback.
 Una respuesta 503 de /api/state indica un problema del servidor; sin sesion y con configuracion correcta debe responder 401.
+
+## Deteccion automatica en Atlantico
+
+La nueva version consulta limites por tramo con el GPS y el catalogo OSM incluido. Ejecutar `supabase/enable-automatic-limits.sql` en Supabase antes de guardar eventos automaticos. Ver [docs/automatic-speed-limits.md](docs/automatic-speed-limits.md) para activar, actualizar datos y conocer la cobertura. No requiere una API de mapas de pago. Los tramos sin dato se muestran como limite no disponible.

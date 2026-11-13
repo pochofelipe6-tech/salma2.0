@@ -6,7 +6,7 @@ import styles from './admin-screen.module.css';
 
 type Vehicle={id:number;user_id:string;plate:string;model:string;driver:string};
 type Trip={id:number;user_id:string;plate:string;model?:string;driver:string;zone:string;sector:string;started:string;ended:string|null};
-type RouteEvent={id:number;plate:string;driver:string;zone:string;sector:string;speed:number;limit_speed:number;created:string;lat:number;lng:number};
+type RouteEvent={road_id?:string;id:number;plate:string;driver:string;zone:string;sector:string;speed:number;limit_speed:number;created:string;lat:number;lng:number};
 export type AdminData={user:{id:string;name:string;email:string;role:string};vehicles:Vehicle[];trips:Trip[];events:RouteEvent[]};
 type Tab='Resumen'|'Viajes'|'Vehículos'|'Alertas';
 
@@ -16,7 +16,7 @@ const zoneName=(id:string)=>routeZones.find(z=>z.id===id)?.name||id;
 const dateTime=(value:string)=>new Date(value).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});
 
 function downloadCsv(events:RouteEvent[]){
-  const rows=[['Placa','Conductor','Zona','Sector','Velocidad','Limite','Fecha UTC','Latitud','Longitud'],...events.map(e=>[e.plate,e.driver,e.zone,e.sector,e.speed,e.limit_speed,e.created,e.lat,e.lng])];
+  const rows=[['Placa','Conductor','Zona','Sector','Velocidad','Limite','Fecha UTC','Latitud','Longitud'],...events.map(e=>[e.plate,e.driver,e.road_id?'Límite del tramo':e.zone,e.sector,e.speed,e.limit_speed,e.created,e.lat,e.lng])];
   const csv='﻿'+rows.map(r=>r.map(v=>'"'+String(v).replace(/^[=+@-]/,"'").replaceAll('"','""')+'"').join(';')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
   const link=document.createElement('a');link.href=url;link.download='seguimiento-de-ruta-alertas.csv';link.click();URL.revokeObjectURL(url);
@@ -37,7 +37,7 @@ export default function AdminScreen({data,error,onError,onRefresh,onLogout}:{dat
   const initial=data.user.name.trim().slice(0,1).toUpperCase()||'A';
   const today=new Date().toDateString();
   const query=filter.trim().toLowerCase();
-  const events=data.events.filter(e=>`${e.plate} ${e.driver} ${e.sector} ${e.zone} ${zoneName(e.zone)}`.toLowerCase().includes(query));
+  const events=data.events.filter(e=>`${e.plate} ${e.driver} ${e.sector} ${e.zone} ${e.road_id?'Límite del tramo':zoneName(e.zone)}`.toLowerCase().includes(query));
   const shown=tab==='Resumen'?events.slice(0,5):events;
   const stats=[
     {label:'Vehículos registrados',value:data.vehicles.length,note:'En tu centro de seguridad',icon:Car,tone:styles.green},
