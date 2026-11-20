@@ -1,23 +1,46 @@
 {
   "region": "Atlántico, Colombia",
-  "downloadedAt": "2026-11-13T15:58:27.599Z",
+  "downloadedAt": "2026-11-20T19:36:08.498Z",
   "source": "https://download.geofabrik.de/south-america/colombia.html",
   "boundarySource": "https://nominatim.openstreetmap.org",
   "boundaryOsmId": 1315209,
   "license": "ODbL-1.0",
   "attribution": "© OpenStreetMap contributors",
-  "roadWays": 35168,
-  "schoolObjects": 380,
-  "roadsWithMaxspeedTag": 2922,
-  "roadsWithNumericMaxspeed": 2921,
-  "roadsWithConditionalLimit": 0,
+  "roadWays": 35171,
+  "schoolObjects": 393,
+  "places": {
+    "town": 36,
+    "neighbourhood": 540,
+    "village": 82,
+    "locality": 223,
+    "hamlet": 32,
+    "city": 2,
+    "suburb": 6,
+    "quarter": 1
+  },
+  "areas": {
+    "landuse_residential": 676,
+    "landuse_industrial": 203,
+    "place_town": 3,
+    "place_suburb": 2,
+    "landuse_retail": 14,
+    "landuse_commercial": 36,
+    "place_neighbourhood": 15,
+    "place_village": 1,
+    "admin_level_9": 276,
+    "place_city": 2,
+    "admin_level_6": 25,
+    "admin_level_8": 5,
+    "admin_level_7": 1
+  },
+  "incompleteRelations": 7885,
+  "roadsWithMaxspeedTag": 2923,
+  "roadsWithNumericMaxspeed": 2922,
   "roadsWithSchoolZoneTag": 0,
   "notes": [
     "Conteos de objetos OSM, no kilómetros ni colegios necesariamente únicos.",
     "Incluye vías que intersectan el departamento; no recorta sus geometrías al borde.",
-    "Los polígonos escolares no equivalen a una zona de velocidad alrededor del colegio.",
-    "Faltan posibles colegios representados por relaciones OSM.",
-    "La clasificación de vía no demuestra un límite legal; no se inventan límites para datos ausentes.",
-    "Este extracto no activa la detección automática de la aplicación."
+    "Los barrios provienen de puntos y polígonos OSM; su cobertura puede estar incompleta.",
+    "La clasificación SST se calcula en scripts/build-road-catalog.mjs."
   ]
 }

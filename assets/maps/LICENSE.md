@@ -7,4 +7,4 @@
 - Extracto original: https://download.geofabrik.de/south-america/colombia.html
 - Preparación reproducible: `scripts/extract-atlantico-map.mjs` y `scripts/build-road-catalog.mjs`.
 
-La fecha de preparación está en el campo `date` de `atlantico-roads.json`. Los datos pueden ser incompletos o desactualizados; no constituyen un inventario oficial de señalización vial.
+`atlantico-schools.json` alimenta el registro de zonas. El mapa de vías con límites SST está en `public/map-tiles/`; su fecha de preparación está en el campo `date` de `public/map-tiles/index.json`. Los datos pueden ser incompletos o desactualizados; no constituyen un inventario oficial de señalización vial.

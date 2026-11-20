@@ -1,76 +1,62 @@
-﻿# Deteccion automatica de limites: Atlantico
+﻿# Detección automática de vía y límite: Atlántico
 
-La app identifica el tramo con el GPS y aplica el limite preventivo SST de su categoria: urbana 50, nacional 70, curvas 35 y escolar/residencial 30 km/h. Ya no pide seleccionar zona. El detector se ejecuta en el servidor, usa un indice geografico local y no necesita cuentas de HERE/TomTom ni consultas publicas por cada posicion.
+La app reconoce en el teléfono la vía por la que va el conductor, le dice dónde está («Vas por Autopista de La Cordialidad, Galapa») y alerta en pantalla, con pitido y voz, si supera el límite preventivo SST del tramo.
 
-## Activacion
+## Límites SST
 
-1. Ejecutar completo `supabase/enable-automatic-limits.sql` en Supabase > SQL Editor. Equivale a las migraciones 006, 007 y 008, en ese orden. Si ya se aplicaron 006 y 007, basta ejecutar 008_sst_zone_limits.sql. No elimina viajes ni alertas anteriores.
-2. Desplegar esta version en Vercel. `assets/maps/atlantico-roads.json` se incluye en el paquete del servidor, verificado en el trace de produccion.
-3. Iniciar una ruta, permitir GPS y esperar dos posiciones recientes, con precision de 25 m o menos, sobre un tramo inequivoco.
+| Situación | Límite | Cómo se detecta |
+|---|---|---|
+| Vía nacional fuera de cascos urbanos | 70 km/h | Troncales y autopistas, rutas 25 y 90 (y variantes) y vías con nombre de corredor nacional: La Cordialidad, Vía Oriental, Circunvalar de la Prosperidad, Vía al Mar, Troncal de Occidente, etc. |
+| Vía urbana en ciudad o pueblo | 50 km/h | Perímetro urbano de Barranquilla, barrios, centros poblados y usos residenciales/comerciales de OSM, más densidad de calles locales (pueblos sin polígonos). Una vía nacional que atraviesa un pueblo pasa a 50. |
+| Colegio | 30 km/h | Hasta 50 m del predio del colegio u 80 m de su punto (393 colegios). No se aplica en autopistas fuera del casco urbano ni en puentes. |
+| Curva | 35 km/h | Radio de giro calculado con la geometría: menos de 110 m en vías nacionales y 90 m en las demás, con giro total de 30° o más. Incluye 25 m de aproximación. Glorietas y rampas incluidas. |
+| Zona residencial (`living_street`) | 30 km/h | Etiqueta de OSM. |
+| Vía rural menor | 50 km/h | Caminos sin clasificar fuera de cascos urbanos. |
 
-La alerta visual y sonora funciona con el detector. Para guardar los eventos en el administrador es necesario aplicar el SQL. No se ha aplicado remotamente: este entorno solo dispone de la clave publica de Supabase, sin acceso administrativo SQL.
+Las calles residenciales dentro de ciudades y pueblos son vía urbana (50). Si OSM tiene un límite publicado (`maxspeed`), la app lo muestra aparte y recuerda respetar la señalización. Los límites son preventivos SST; no reemplazan la señalización oficial.
 
-## Cobertura y comportamiento
+«La Oriental» es la ruta 25 entre Malambo y Ponedera. En OSM figura como Autopista Malambo, Variante Palmar de Varela o Troncal de Occidente, y la app la anuncia como «Vía Oriental (…)».
 
-- 35.168 objetos de vias y 2.921 limites fijos numericos utilizables (8,3 % por numero de objetos; no por kilometros).
-- Las alertas usan exclusivamente 50/70/35/30 como politica preventiva SST por categoria. No son limites legales consultados del mapa. El limite numerico registrado en OSM se conserva por separado en posted_limit/postedLimit. Si falta informacion para identificar el tramo, muestra Limite no disponible.
-- Descarta GPS impreciso, ubicacion fuera de cobertura, cruces o vias paralelas ambiguos, cambios de tramo sin confirmar y limites direccionales/condicionales que esta version no puede resolver.
-- Las tarjetas de 50/70/35/30 muestran los umbrales de alerta SST configurados por el usuario. El valor registrado en el mapa puede ser diferente; la interfaz lo muestra aparte y recuerda respetar la senalizacion.
-- Las etiquetas Via principal/local/residencial describen el tipo de via en OSM. No demuestran que una carretera sea nacional ni que sea una zona escolar.
-- Hay 380 objetos escolares en el inventario original. No se convierten en zonas de velocidad: la cercania a un colegio no define un limite de 30, ni una curva geometrica define un limite de 35.
-- Requiere app abierta y conexion al servidor. GPS y audio dependen del navegador/dispositivo. Probar el sonido antes de salir.
-- Al perder GPS o informacion del limite se suspende la alerta automatica. La senalizacion vial sigue siendo la referencia al conducir.
+## Funcionamiento
 
-## Registro y seguridad
+1. `npm run maps:build` clasifica cada vía en tramos (zona, límite, barrio y municipio) y genera cuadrículas de 0,02° (≈2,2 km) en `public/map-tiles/`: 647 archivos, 4,4 MB en total (la mayor pesa 132 KB sin comprimir).
+2. Durante la ruta, el teléfono descarga las cuadrículas en ≈1,5 km alrededor y reconoce la vía en cada lectura GPS, sin esperar al servidor. Así la alerta funciona aunque la conexión sea lenta.
+3. El reconocimiento combina distancia, rumbo de marcha, sentido de las vías de una sola dirección y continuidad con la vía anterior. Un salto a una vía paralela sin cambio de rumbo se confirma con dos lecturas. Requiere precisión GPS de 35 m o mejor.
+4. Al haber exceso, el teléfono envía a `POST /api/event` el tramo identificado. El servidor comprueba con las mismas cuadrículas que el tramo esté junto a la posición GPS y que la velocidad supere su límite. Se guarda un evento por episodio y por vía.
+5. Las zonas confirmadas por el administrador (`GET /api/confirmed-zones`) tienen prioridad sobre el mapa base, y se aplica la más restrictiva.
 
-POST /api/road requiere sesion y dos posiciones para devolver tramo/limite o un motivo de desconocido.
-POST /api/event vuelve a calcular el tramo en el servidor y no acepta limites enviados por el cliente. La base consulta un catalogo protegido, calcula limit_speed, comprueba proximidad a la geometria y exige un viaje activo del conductor. Guarda el tramo en sector y road_id. Los eventos historicos siguen siendo compatibles.
+`next.config.mjs` incluye las cuadrículas en la función del servidor (`outputFileTracingIncludes`). No requiere migraciones nuevas: los eventos se guardan con `zone` y la base calcula `limit_speed` (migraciones 001 a 009).
 
-## Datos y actualizacion
+## Voz y avisos
 
-Fuente Colombia: https://download.geofabrik.de/south-america/colombia.html
-Poligono departamental: OpenStreetMap/Nominatim, relacion 1315209 (CO-ATL).
-Licencia ODbL 1.0: https://www.openstreetmap.org/copyright
+- Al iniciar la ruta: «Iniciando ruta. Te diré por dónde vas».
+- Al cambiar de vía: «Vas por …, barrio, municipio. Vía nacional, límite 70 kilómetros por hora». Al cambiar solo el límite en la misma vía, anuncia la nueva zona (por ejemplo, zona escolar).
+- Durante un exceso: aviso en pantalla «Reduce la velocidad a N km/h», pitido cada 5 s y voz cada 15 s.
+- El conductor puede desactivar la voz; la preferencia se guarda en el teléfono.
 
-Los originales estan en data/maps/ (fuera de Git); el extracto distribuible derivado esta en assets/maps/. Conservar atribucion y licencia: el artefacto geografico derivado se distribuye bajo ODbL.
+## Datos y actualización
 
-1. `node scripts/download-colombia-map.mjs`: descarga/reanuda y verifica el MD5 publicado.
-2. `npm install --prefix data/map-tools --no-audit --no-fund osm-pbf-parser`: instala el lector aislado.
-3. Obtener atlantico-boundary.json desde https://nominatim.openstreetmap.org/search?state=Atl%C3%A1ntico&country=Colombia&format=jsonv2&polygon_geojson=1&limit=1
-4. `node scripts/extract-atlantico-map.mjs`: extrae vias que intersectan el departamento y colegios representados por nodos/vias; no incluye colegios representados por relaciones.
-5. `npm run maps:build`: genera el catalogo, SQL y archivo de activacion combinado.
-6. Aplicar SQL actualizado y desplegar codigo y datos juntos.
+Fuente: https://download.geofabrik.de/south-america/colombia.html. Polígono departamental: OpenStreetMap/Nominatim, relación 1315209 (CO-ATL). Licencia ODbL 1.0: https://www.openstreetmap.org/copyright
 
-El script download-atlantico-map.mjs ofrece una alternativa puntual con Overpass, pero las instancias publicas pueden rechazarla. No es una dependencia del seguimiento en vivo.
+1. `node scripts/download-colombia-map.mjs`: descarga y verifica el PBF de Colombia en `data/maps/` (fuera de Git).
+2. `npm install --prefix data/map-tools --no-audit --no-fund osm-pbf-parser`.
+3. Obtener `data/maps/atlantico-boundary.json` desde https://nominatim.openstreetmap.org/search?state=Atl%C3%A1ntico&country=Colombia&format=jsonv2&polygon_geojson=1&limit=1
+4. `npm run maps:extract`: dos pasadas sobre el PBF (≈45 s). Extrae vías, colegios, barrios, centros poblados, municipios, localidades, perímetro urbano y usos del suelo. El resumen queda en `docs/atlantico-map-coverage.json`.
+5. `npm run maps:build`: genera `public/map-tiles/` y `assets/maps/atlantico-schools.json` (≈10 s).
+6. `npm run test:maps` y desplegar.
 
 ## Pruebas
 
-- `npm run test:maps`: limites variables, imprecision, ambiguedad, datos ausentes, muestra real y PostgreSQL embebido.
-- `npx playwright test tests/driver.spec.ts`: flujo, alertas, cambio de limites y ausencia de alertas sin datos.
-- `npm run build`: compilacion, TypeScript y paquete de produccion.
+- `npm run test:maps`: casos sintéticos (cruces, calzadas paralelas, vía principal frente a calle de servicio, giros, zonas confirmadas) y recorridos simulados con ruido GPS de ±6 m sobre La Cordialidad, la Oriental, la Prosperidad y calles urbanas. Exige 90 % o más de lecturas en la vía correcta (actualmente 98–99,9 %).
+- `npx playwright test tests/driver.spec.ts`: flujo, «Vas por», alerta con el límite de cada zona, cambio de límite y ausencia de alerta sin datos.
+- `npm run build`: compilación y verificación de que las cuadrículas están en la función de la API.
 
-Falta una prueba de campo con los dispositivos y recorridos reales. No hay cobertura completa de todas las zonas del departamento.
+## Limitaciones
 
-Para ampliar datos se investigaron HERE Route Matching y TomTom Snap to Roads. Requieren cuenta y revisar cobertura/plan; no se contrataron servicios:
-https://docs.here.com/routing/docs/detect-speeding-gps
-https://docs.tomtom.com/snap-to-roads-api/documentation/snap-to-roads-api/synchronous-snap-to-roads
-
-## Clasificacion SST
-
-Se mantiene la identificacion conservadora de tramos. Las vias de categoria residencial se agrupan con escolar/residencial; eso no significa que se haya detectado un colegio. Las vias nacionales requieren referencia 25, 90 o 90A en el mapa, en vez de considerar nacional cualquier avenida principal. La etiqueta urbana del resto de tramos es una clasificacion operativa aproximada del catalogo, no una delimitacion oficial. No hay etiquetas explicitas de curvas ni zonas escolares en el extracto; el umbral de curvas queda configurado, pero no se inventa una deteccion de curva.
+- Depende de la calidad de OpenStreetMap: colegios o barrios no mapeados no se reconocen. El 90 % de las calles urbanas de Barranquilla tienen barrio asignado.
+- Requiere la app abierta y GPS con precisión de 35 m o mejor. El seguimiento en segundo plano no está garantizado.
+- Falta validar en campo con recorridos reales.
 
 ## Registrar zonas del recorrido
 
-Aplicar 009_route_zone_survey.sql despues de 008, o el archivo enable-automatic-limits.sql actualizado completo para una instalacion nueva.
-
-El conductor activa Registrar zonas del recorrido y despues Iniciar ruta. Tambien puede activarlo en una ruta abierta. La opcion se conserva en trips.collect_zones para reanudarla al recargar. El GPS de la ruta y el registro de propuestas funcionan juntos; no se inicia un segundo viaje.
-
-Cada cinco segundos como maximo se intenta proponer un tramo inequivoco del catalogo, incluso si no tenia maxspeed numerico. Se guarda un tramo observado de hasta 90 m. La proximidad a un colegio (80 m) y cambios de direccion en la geometria se guardan como posibilidades de confianza baja. Un cambio de direccion puede ser una esquina. Estos indicios NO activan nuevas alertas automaticamente.
-
-En Administrador > Zonas se pueden ver las propuestas, previsualizar la geometria, elegir categoria y margen (5 a 40 m), confirmar o descartar. Confirmar requiere marcar que se verifico el tramo. Las zonas confirmadas se consultan con dos posiciones GPS recientes y tienen prioridad sobre la clasificacion aproximada del catalogo. Si varias zonas confirmadas se superponen, se aplica el menor umbral SST. Descartarlas las excluye de futuros reconocimientos.
-
-Se deduplican las observaciones por ruta y clave de tramo/indicio. Las propuestas sobreviven a la eliminacion del viaje de origen. La cola de propuestas pendiente se mantiene en la memoria de la pestana y se reintenta; una falla de guardado se informa y bloquea el cierre hasta reintentar. No cerrar/recargar con guardados pendientes. No existe almacenamiento offline persistente.
-
-La fuente geografica y la precision siguen limitando la cobertura; guardar un recorrido no demuestra por si solo el limite legal. Este modo no reconoce automaticamente todos los colegios ni todas las curvas.
-
-Pruebas adicionales: npm run test:survey verifica candidatos, aislamiento RLS, solo revision por administrador, ausencia de alertas pendientes, alerta posterior confirmada y descarte.
+El modo de registro sigue disponible (migración 009). Propone tramos, colegios y curvas al administrador, que puede confirmarlos con su categoría y margen. Las zonas confirmadas se descargan al teléfono y tienen prioridad sobre la clasificación automática. `npm run test:survey` verifica propuestas, aislamiento, confirmación solo por el administrador y alertas posteriores.

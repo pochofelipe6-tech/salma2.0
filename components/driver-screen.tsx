@@ -1,10 +1,29 @@
 'use client';
-import type {RoadMatch,RoadFix} from '../lib/road-types';
+import type {ConfirmedZone,RoadMatch,RoadFix} from '../lib/road-types';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {ShieldCheck,MapPin,Navigation,Play,Square,LogOut,Car,Clock3,Route,Gauge,Volume2,Check,LoaderCircle,X,LocateFixed,AlertTriangle,CalendarDays} from 'lucide-react';
+import {ShieldCheck,MapPin,Navigation,Play,Square,LogOut,Car,Clock3,Route,Gauge,Volume2,VolumeX,Check,LoaderCircle,X,LocateFixed,AlertTriangle,CalendarDays} from 'lucide-react';
 import RouteMap from './route-map';
 import {routeApi,routeZones,routeDistance,type DriverData,type DriverTrip,type RoutePoint} from '../lib/route-types';
+import {createRoadTracker,createSegmentIndex} from '../lib/road-matcher';
+import {createTileLoader} from '../lib/tile-loader';
 import styles from './driver-screen.module.css';
+
+// Motor de reconocimiento en el teléfono: cuadrículas del mapa + seguimiento de la vía.
+function createMapEngine(onLoad:()=>void){
+  const index=createSegmentIndex();
+  return {tracker:createRoadTracker(index),loader:createTileLoader(index,onLoad)};
+}
+const spokenName=(name:string)=>({'Calle sin nombre':'una calle sin nombre','Vía sin nombre':'una vía sin nombre','Vía de servicio':'una vía de servicio'} as Record<string,string>)[name]||name;
+// En la app Android (WebView) no existe speechSynthesis: la app expone la voz nativa como SalmaaAndroid.
+type AndroidVoice={speak:(text:string)=>void;stopSpeaking:()=>void};
+const androidVoice=()=>(window as unknown as {SalmaaAndroid?:AndroidVoice}).SalmaaAndroid;
+function speak(text:string){
+  try{
+    const bridge=androidVoice();if(bridge){bridge.speak(text);return}
+    const synth=window.speechSynthesis;if(!synth)return;synth.cancel();const utterance=new SpeechSynthesisUtterance(text);utterance.lang='es-CO';synth.speak(utterance);
+  }catch{}
+}
+function stopSpeaking(){try{const bridge=androidVoice();if(bridge)bridge.stopSpeaking();else window.speechSynthesis?.cancel()}catch{}}
 
 export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;onRefresh:()=>Promise<void>;onLogout:()=>Promise<void>}){
   const [vehicleForm,setVehicleForm]=useState(false),[plate,setPlate]=useState(''),[model,setModel]=useState('');
@@ -18,7 +37,10 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   const gpsRunning=useRef(false),watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),lastSaveFailure=useRef(''),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
   tripRef.current=trip;
   const [road,setRoad]=useState<RoadMatch>({status:'unknown',reason:'Inicia la ruta para detectar el tramo.',limit:null});
-  const previousFix=useRef<RoadFix|null>(null),lookupVersion=useRef(0),lastSound=useRef(0),alertedRoad=useRef('');
+  const previousFix=useRef<RoadFix|null>(null),lastSound=useRef(0),lastSpeech=useRef(0),alertedRoad=useRef('');
+  const engine=useRef<ReturnType<typeof createMapEngine>|null>(null),confirmed=useRef<ConfirmedZone[]>([]),lastFix=useRef<{point:RoadFix;km:number|null}|null>(null),roadRef=useRef(road);
+  const [voice,setVoice]=useState(true),voiceRef=useRef(true),spoken=useRef({key:'',road:'',limit:null as number|null,at:0}),stable=useRef({key:'',count:0});
+  roadRef.current=road;
   const activeZone={id:road.zone||'',name:road.label||'Zona por identificar',icon:'⚠️',limit:road.limit};
   const limit=activeZone.limit;
   const detectedZone=tracking&&!stale&&road.status==='known'&&road.limit!==null?road.zone:undefined;
@@ -35,9 +57,41 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     return()=>{cancelled=true};
   },[initial?.id,tracking,busy,finished]);
   useEffect(()=>{
-    const timer=setInterval(()=>{setNow(Date.now());if(tracking&&Date.now()-lastSeen.current>15000){lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'Sin GPS reciente.',limit:null});setStale(true);setSpeed(null);setGps('Sin señal GPS reciente')}},1000);
+    const timer=setInterval(()=>{setNow(Date.now());if(tracking&&Date.now()-lastSeen.current>15000){lostGps('Sin GPS reciente.');setGps('Sin señal GPS reciente')}},1000);
     return()=>clearInterval(timer);
   },[tracking]);
+  useEffect(()=>{try{const saved=localStorage.getItem('salmaa-voz');if(saved==='off'){voiceRef.current=false;setVoice(false)}}catch{}},[]);
+  // Zonas confirmadas por el administrador: se cargan al iniciar y se refrescan cada 10 minutos.
+  useEffect(()=>{
+    if(!tracking)return;
+    const load=()=>void routeApi('confirmed-zones').then(r=>{confirmed.current=Array.isArray(r.zones)?r.zones:[]}).catch(()=>{});
+    load();const timer=setInterval(load,600000);return()=>clearInterval(timer);
+  },[tracking]);
+  function mapEngine(){
+    return engine.current??=createMapEngine(()=>{const last=lastFix.current;if(last&&gpsRunning.current&&roadRef.current.status!=='known')evaluate(last.point,last.km)});
+  }
+  function lostGps(reason:string){
+    previousFix.current=null;lastFix.current=null;engine.current?.tracker.reset();stable.current={key:'',count:0};
+    setRoad({status:'unknown',reason,limit:null});setStale(true);setSpeed(null);
+  }
+  function toggleVoice(){
+    const next=!voiceRef.current;voiceRef.current=next;setVoice(next);
+    try{localStorage.setItem('salmaa-voz',next?'on':'off')}catch{}
+    if(next)speak('Voz activada. Te diré por dónde vas.');else stopSpeaking();
+  }
+  // Anuncia por voz la vía y el límite cuando cambian y se confirman en dos lecturas seguidas.
+  // Se llama desde el callback del GPS: solo usa refs y argumentos, no estado de React.
+  function announce(match:RoadMatch,km:number|null){
+    if(match.status!=='known'||match.limit===null||!match.roadName)return;
+    const key=match.roadName+'|'+match.limit;
+    stable.current=stable.current.key===key?{key,count:stable.current.count+1}:{key,count:1};
+    if(stable.current.count<2||spoken.current.key===key||Date.now()-spoken.current.at<5000)return;
+    const roadChanged=spoken.current.road!==match.roadName,label=(match.label||'').replace(/ · /g,', ');
+    const text=roadChanged?`Vas por ${spokenName(match.roadName)}${match.place?', '+match.place:''}. ${label}, límite ${match.limit} kilómetros por hora.`:`${label}. Límite ${match.limit} kilómetros por hora.`;
+    spoken.current={key,road:match.roadName,limit:match.limit,at:Date.now()};
+    // Durante un exceso habla la alerta de velocidad, no el cambio de vía.
+    if(voiceRef.current&&!(km!==null&&km>match.limit))speak(text);
+  }
   useEffect(()=>{if(!tracking&&!queue.current.length&&!surveyQueue.current.length)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking,collectError,saveError,collected]);
 
   useEffect(()=>{
@@ -92,16 +146,21 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   }
   useEffect(()=>{
     if(!excess)return;
-    const sound=()=>{if(Date.now()-lastSound.current>=5000){beep();lastSound.current=Date.now()}};sound();const timer=setInterval(sound,1000);return()=>clearInterval(timer);
+    // Pitido cada 5 s y aviso por voz cada 15 s mientras dure el exceso.
+    const sound=()=>{
+      if(Date.now()-lastSound.current>=5000){beep();lastSound.current=Date.now()}
+      if(voiceRef.current&&Date.now()-lastSpeech.current>=15000){lastSpeech.current=Date.now();speak(`Reduce la velocidad. El límite es ${roadRef.current.limit} kilómetros por hora.`)}
+    };
+    sound();const timer=setInterval(sound,1000);return()=>{clearInterval(timer);lastSpeech.current=0};
   },[excess]);
   function receive(p:GeolocationPosition){
     if(!mounted.current||!tripRef.current||!gpsRunning.current)return;
-    if(!Number.isFinite(p.coords.latitude)||Math.abs(p.coords.latitude)>90||!Number.isFinite(p.coords.longitude)||Math.abs(p.coords.longitude)>180||!Number.isFinite(p.coords.accuracy)||p.coords.accuracy<0){lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'GPS inválido.',limit:null});setStale(true);setSpeed(null);setGps('Ubicación no disponible · buscando GPS');return}
+    if(!Number.isFinite(p.coords.latitude)||Math.abs(p.coords.latitude)>90||!Number.isFinite(p.coords.longitude)||Math.abs(p.coords.longitude)>180||!Number.isFinite(p.coords.accuracy)||p.coords.accuracy<0){lostGps('GPS inválido.');setGps('Ubicación no disponible · buscando GPS');return}
     if(Date.now()-p.timestamp>15000)return;
     lastSeen.current=Date.now();setStale(false);setGps('GPS conectado');
     const point={lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,recorded_at:new Date(p.timestamp).toISOString()};
     setPosition(point);
-    if(p.coords.accuracy>60){lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'GPS impreciso.',limit:null});setSpeed(null);setGps(`Ubicación aproximada · margen de ${Math.round(p.coords.accuracy)} m`);return}
+    if(p.coords.accuracy>60){previousFix.current=null;lastFix.current=null;engine.current?.tracker.reset();setRoad({status:'unknown',reason:'GPS impreciso.',limit:null});setSpeed(null);setGps(`Ubicación aproximada · margen de ${Math.round(p.coords.accuracy)} m`);return}
     if(p.timestamp>lastTimestamp.current&&(p.timestamp-lastSaved.current>=5000||!lastSaved.current)){
       lastTimestamp.current=p.timestamp;lastSaved.current=p.timestamp;queue.current.push(point);setPoints(previous=>[...previous,point]);
     }
@@ -110,22 +169,31 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     if(km===null)setGps('GPS conectado · velocidad no disponible');
     const current=tripRef.current,previous=previousFix.current;previousFix.current=point;
     if(collectRef.current&&previous&&point.accuracy<=25&&p.timestamp-lastSurvey.current>=5000){lastSurvey.current=p.timestamp;surveyQueue.current.push({trip:current.id,fix:point,previous});void flushSurvey()}
-    const version=++lookupVersion.current;
-    setRoad({status:'unknown',reason:'Identificando vía y límite...',limit:null});
-    void routeApi('road',{fix:point,previous}).then(async result=>{
-      if(!mounted.current||version!==lookupVersion.current||tripRef.current?.id!==current.id)return;
-      const match=result.match as RoadMatch;setRoad(match);
-      if(match.status!=='known'||match.limit===null||km===null)return;
-      if(km>match.limit){
-        const key=match.roadId+':'+match.limit;
-        if(alertedRoad.current!==key&&!sendingEvent.current){
-          sendingEvent.current=true;
-          try{await routeApi('event',{trip:current.id,fix:point,previous,speed:km});alertedRoad.current=key}
-          catch{if(mounted.current)setError('La alerta está activa, pero no se guardó. Revisa la conexión y ejecuta las migraciones 006 y 007 de Supabase.')}
-          finally{sendingEvent.current=false}
-        }
-      }else if(km<=match.limit-3)alertedRoad.current='';
-    }).catch(()=>{if(mounted.current&&version===lookupVersion.current)setRoad({status:'unknown',reason:'No se pudo consultar el límite. Revisa la conexión.',limit:null})});
+    lastFix.current={point,km};
+    evaluate(point,km);
+  }
+  // Reconoce la vía en el teléfono (sin esperar al servidor) y registra el exceso una vez por episodio.
+  function evaluate(point:RoadFix,km:number|null){
+    const current=tripRef.current;if(!current||!mounted.current)return;
+    const {tracker,loader}=mapEngine();
+    void loader.ensure(point.lat,point.lng);
+    const coverage=loader.coverage(point.lat,point.lng);
+    if(coverage==='outside'){setRoad({status:'unknown',reason:'Fuera de la cobertura del mapa (Atlántico).',limit:null});return}
+    // Aunque la cuadrícula actual siga descargando, los tramos de las vecinas ya cargadas sirven.
+    const match=tracker.match(point,km,confirmed.current);
+    if(match.status!=='known'&&coverage!=='ready'){setRoad({status:'unknown',reason:coverage==='error'?'No se pudo descargar el mapa de la zona. Revisa la conexión.':'Descargando el mapa de la zona...',limit:null});return}
+    setRoad(match);announce(match,km);
+    if(match.status!=='known'||match.limit===null||km===null)return;
+    if(km>match.limit){
+      const key=match.roadName+':'+match.limit;
+      if(alertedRoad.current!==key&&!sendingEvent.current){
+        sendingEvent.current=true;
+        void routeApi('event',{trip:current.id,fix:point,speed:km,...(match.surveyZoneId?{surveyZoneId:match.surveyZoneId}:{segment:match.roadId})})
+          .then(()=>{alertedRoad.current=key})
+          .catch(()=>{if(mounted.current)setError('La alerta está activa, pero no se guardó en el historial. Revisa la conexión.')})
+          .finally(()=>{sendingEvent.current=false});
+      }
+    }else if(km<=match.limit-3)alertedRoad.current='';
   }
 
   async function locate(){
@@ -135,15 +203,17 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     catch{throw new Error('No se pudo obtener tu ubicación. Permite el GPS en el navegador y vuelve a intentarlo.')}
   }
   async function connectGPS(first:GeolocationPosition,current:DriverTrip){
-    gpsRunning.current=true;previousFix.current=null;lookupVersion.current++;alertedRoad.current='';tripRef.current=current;setTrip(current);setTracking(true);setFinished(false);lastSeen.current=Date.now();lastSaved.current=0;
+    gpsRunning.current=true;previousFix.current=null;lastFix.current=null;mapEngine().tracker.reset();spoken.current={key:'',road:'',limit:null,at:0};alertedRoad.current='';tripRef.current=current;setTrip(current);setTracking(true);setFinished(false);lastSeen.current=Date.now();lastSaved.current=0;
     try{audio.current??=new AudioContext();await audio.current.resume()}catch{}
     try{if('Notification' in window&&Notification.permission==='default')void Notification.requestPermission()}catch{}
     receive(first);
-    watch.current=navigator.geolocation.watchPosition(receive,()=>{lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'GPS desconectado.',limit:null});setStale(true);setSpeed(null);setGps('Se perdió la ubicación · revisa el GPS')},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+    watch.current=navigator.geolocation.watchPosition(receive,()=>{lostGps('GPS desconectado.');setGps('Se perdió la ubicación · revisa el GPS')},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
     void flush();
   }
   async function begin(){
     if(starting.current)return;starting.current=true;setBusy(true);setError('');
+    // La voz debe arrancar dentro del toque del conductor (requisito de los navegadores móviles).
+    if(voiceRef.current)speak('Iniciando ruta. Te diré por dónde vas.');
     try{
       try{audio.current??=new AudioContext();await audio.current.resume()}catch{}
       const first=await locate();
@@ -155,11 +225,12 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   }
   async function resume(){
     if(!trip||starting.current)return;starting.current=true;setBusy(true);setError('');
+    if(voiceRef.current)speak('Reanudando ruta.');
     try{await connectGPS(await locate(),trip)}catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
   async function finish(){
     if(!trip||busy||collectBusy)return;gpsRunning.current=false;setBusy(true);setError('');
-    if(watch.current!==null)navigator.geolocation.clearWatch(watch.current);watch.current=null;lookupVersion.current++;previousFix.current=null;setRoad({status:'unknown',reason:'Ruta finalizada.',limit:null});setTracking(false);setSpeed(null);setStale(true);
+    if(watch.current!==null)navigator.geolocation.clearWatch(watch.current);watch.current=null;lostGps('Ruta finalizada.');setTracking(false);stopSpeaking();
     try{
       if(!await flushSurvey())throw new Error(surveyFailure.current+' Las propuestas siguen pendientes. Mantén esta pestaña abierta y vuelve a finalizar tras corregirlo.');
       if(flushing.current)throw new Error('Se está guardando el recorrido. Espera un momento y vuelve a finalizar.');
@@ -175,8 +246,9 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
         <div className={styles.speedAlertSymbol}><AlertTriangle size={58} strokeWidth={2.5}/></div>
         <span className={styles.speedAlertEyebrow}>ALERTA DE SEGURIDAD VIAL</span>
         <h2 id="speed-alert-title">¡Exceso de velocidad!</h2>
+        <strong className={styles.reduceTo}>Reduce la velocidad a {limit} km/h</strong>
         <div className={styles.speedAlertZone}>{activeZone.icon} {activeZone.name} <b>· {limit} km/h</b></div>
-        <div className={styles.detectedRoadName}>{road.roadName}</div><p id="speed-alert-description">Reduce la velocidad de forma gradual.<br/>Tu seguridad es lo primero.</p>
+        <div className={styles.detectedRoadName}>{road.roadName}{road.place&&<small>{road.place}</small>}</div><p id="speed-alert-description">Reduce la velocidad de forma gradual.<br/>Tu seguridad es lo primero.</p>
         <div className={styles.speedAlertMetrics}><div><span>VELOCIDAD ACTUAL</span><strong>{Math.round(speed!)}<small>km/h</small></strong></div><div><span>LÍMITE PREVENTIVO SST</span><strong>{limit}<small>km/h</small></strong></div></div>
         <div className={styles.speedAlertFooter}><Volume2 size={18}/>Alerta sonora activa</div>
         <small className={styles.speedAlertNote}>Se cierra automáticamente al volver al límite.</small>
@@ -199,6 +271,11 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
       </div>}
     </dialog>
     <header className={styles.header}><a href="/" className={styles.brand}><ShieldCheck/><span>Seguimiento<br/>de Ruta</span><b>SST</b></a><div className={styles.headerRight}><span className={styles.driverBadge}><Car size={16}/> Conductor</span><span className={styles.userName}>{data.user.name}</span><div className={styles.avatar}>{data.user.name.slice(0,1).toUpperCase()}</div><button className={styles.logout} disabled={tracking||busy} aria-label="Cerrar sesión" title={tracking?'Finaliza tu ruta antes de salir':'Cerrar sesión'} onClick={()=>void onLogout().catch(()=>setError('No se pudo cerrar la sesión.'))}><LogOut size={18}/></button></div></header>
+    {tracking&&<section className={styles.whereBar} data-zone={detectedZone} aria-label="Vas por">
+      <span className={styles.whereIcon}><Navigation size={19}/></span>
+      <div className={styles.whereText}><small>VAS POR</small><strong>{road.status==='known'?road.roadName:'Identificando la vía...'}</strong><span>{road.status==='known'?[road.place,road.label].filter(Boolean).join(' · '):road.reason}</span></div>
+      <b className={styles.whereLimit} aria-label={road.limit===null?'Límite no disponible':`Límite ${road.limit} km/h`}>{road.limit??'—'}<small>km/h</small></b>
+    </section>}
     <main className={styles.content}>
       <div className={styles.welcome}><div><span className={styles.eyebrow}>TU SEGURIDAD ES EL CAMINO</span><h1>Hola, {data.user.name.split(' ')[0]}<span> 👋</span></h1><p>{tracking?'Vamos contigo. Conduce con calma y mantén la app abierta.':'Un nuevo recorrido, la misma prioridad: llegar seguro.'}</p></div><span className={styles.date}><CalendarDays size={19}/>{new Date(now).toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})}</span></div>
       {error&&<div className={styles.error} role="alert"><AlertTriangle size={18}/>{error}<button onClick={()=>setError('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
@@ -221,7 +298,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
           </div>
           {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
           {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy||collectBusy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
-          <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.roadName||road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Clasificación basada en OpenStreetMap. Si falta información, no se asigna zona.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
+          <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.status==='known'?[road.roadName,road.place].filter(Boolean).join(' · '):road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Vía nacional 70 · urbana 50 · curvas 35 · colegios 30. Mapa de Atlántico basado en OpenStreetMap.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><button className={styles.soundTest} aria-pressed={voice} onClick={toggleVoice}>{voice?<Volume2 size={14}/>:<VolumeX size={14}/>}{voice?'Voz activada: te digo por dónde vas':'Voz desactivada'}</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>
       <section className={styles.limits} aria-labelledby="limits-title"><div className={styles.sectionTitle}><h2 id="limits-title"><ShieldCheck size={25}/>Límites que protegen</h2><span>Protocolo preventivo SST</span></div><div className={styles.limitGrid}>{routeZones.map(z=><div key={z.id} data-zone={z.id} data-active={detectedZone===z.id} aria-current={detectedZone===z.id?'true':undefined} className={styles.limitCard+(detectedZone===z.id?' '+styles.detectedLimit:'')}><span className={styles.zoneIcon}>{z.icon}</span><div><h3>{z.name}</h3><b>{z.limit}<small> km/h</small></b></div><span className={styles.zoneTag}>{detectedZone===z.id?<><LocateFixed size={13}/>Zona actual</>:'Referencia preventiva'}</span></div>)}</div><p className={styles.limitNote}><Volume2 size={14}/>Alerta sonora al superar el límite registrado del tramo. Las alertas usan estos límites preventivos SST según la categoría identificada. No sustituyen la señalización de la vía.</p></section>

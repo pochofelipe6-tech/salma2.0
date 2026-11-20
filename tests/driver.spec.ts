@@ -3,9 +3,24 @@ import {test,expect,type Page} from '@playwright/test';
 const user={id:'11111111-1111-4111-8111-111111111111',name:'Andrea Pérez',email:'andrea@example.com',role:'driver'};
 const vehicle={id:1,user_id:user.id,plate:'ABC123',model:'Renault Duster',driver:user.name};
 type GPSWindow=Window&{sendGps:(lat:number,lng:number,speed:number)=>void};
+type TestRoad={id:string;name:string;zone:string;label:string;geometry:number[][]};
+const ZONE_INDEX:Record<string,number>={urbana:0,nacional:1,curvas:2,escolar:3};
+// Cuadrícula de mapa en el formato de public/map-tiles (coordenadas en 1e-5 con deltas).
+function tileBody(roads:TestRoad[]){
+  const strings:string[]=[],str=(value:string)=>{if(!strings.includes(value))strings.push(value);return strings.indexOf(value)};
+  return {v:2,date:'2026-11-20',s:strings,r:roads.map(r=>{let px=0,py=0;const flat=r.geometry.flatMap(([x,y])=>{const ix=Math.round(x*1e5),iy=Math.round(y*1e5),delta=[ix-px,iy-py];px=ix;py=iy;return delta});return [r.id,str(r.name),ZONE_INDEX[r.zone],str(r.label),str('Barrio de prueba, Ciudad'),str('secondary'),0,0,flat]})};
+}
+// Vía de prueba que pasa por todas las posiciones GPS de los escenarios.
+const mainRoad=(zone:string,label:string):TestRoad=>({id:'34377021-0',name:'Carrera 51B',zone,label,geometry:[[-74.0805,4.6497],[-74.08,4.65],[-74.0795,4.6509],[-74.079,4.6515]]});
 
-async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,limit=50,label='Zona urbana',zone='urbana',known=true,recording=false}={}){
+async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,accuracy=8,label='Zona urbana',zone='urbana',known=true,recording=false,roads=undefined as TestRoad[]|undefined}={}){
   await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1cAAAAASUVORK5CYII=','base64')}));
+  const tileRoads=roads||[mainRoad(zone,label)],tileKeys:string[]=[];
+  if(known)for(let x=-3706;x<=-3702;x++)for(let y=230;y<=234;y++)tileKeys.push(`${x}_${y}`);
+  await page.route('**/map-tiles/**',route=>{
+    const file=new URL(route.request().url()).pathname.split('/').pop();
+    return route.fulfill({contentType:'application/json',body:JSON.stringify(file==='index.json'?{v:2,date:'2026-11-20',size:.02,tiles:tileKeys}:tileBody(tileRoads))});
+  });
   let vehicles=hasVehicle?[vehicle]:[];
   let trip:Record<string,unknown>|null=resume?{id:7,user_id:user.id,vehicle_id:1,plate:'ABC123',model:'Renault Duster',collect_zones:recording,driver:user.name,zone:'urbana',sector:'Centro',started:new Date().toISOString(),ended:null}:null;
   const saved:Record<string,unknown>[]=[],surveys:Record<string,unknown>[]=[];
@@ -27,7 +42,6 @@ async function mockDriver(page:Page,{hasVehicle=true,denied=false,resume=false,a
     const body=request.method()==='POST'?request.postDataJSON():null;
     const reply=(data:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
     if(action==='state')return reply({user,vehicles,trips:trip?[trip]:[],events});
-    if(action==='road')return reply({match:known?{status:'known',reason:'Registrado',roadId:'34377021',roadName:'Carrera 51B',zone,label,limit,source:'OpenStreetMap'}:{status:'unknown',reason:'La vía no tiene límite registrado.',limit:null}});
     if(action==='survey-count')return reply({count:surveys.length});
     if(action==='survey'){surveys.push(body);return reply({created:1,count:surveys.length})}
     if(action==='collect-mode'){if(trip)trip.collect_zones=body.enabled;return reply({ok:true})}
@@ -148,7 +162,7 @@ test('centra el marcador en las coordenadas recibidas y vuelve tras desplazar el
 
 for(const zone of [{id:'urbana',name:'Zona urbana',limit:50},{id:'nacional',name:'Vía nacional',limit:70},{id:'curvas',name:'Curvas',limit:35},{id:'escolar',name:'Escolar / residencial',limit:30}]){
  test('alerta usa el limite y nombre de '+zone.id,async({page})=>{
-  const mock=await mockDriver(page,{limit:zone.limit,label:zone.name,zone:zone.id});await page.goto('/');
+  const mock=await mockDriver(page,{label:zone.name,zone:zone.id});await page.goto('/');
   await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
   await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
   await expect(page.getByLabel('Tipo de zona',{exact:true})).toHaveCount(0);
@@ -160,6 +174,9 @@ for(const zone of [{id:'urbana',name:'Zona urbana',limit:50},{id:'nacional',name
   await expect(page.locator(`[data-zone="${zone.id}"][data-active="true"]`)).toContainText('Zona actual');
   await expect(page.locator('[data-active="true"]')).toHaveCount(1);
   await expect(warning).toBeVisible();await expect(warning).toContainText(zone.name);await expect(warning).toContainText(zone.limit+' km/h');
+  await expect(warning).toContainText(`Reduce la velocidad a ${zone.limit} km/h`);
+  const where=page.getByRole('region',{name:'Vas por'});
+  await expect(where).toContainText('Carrera 51B');await expect(where).toContainText('Barrio de prueba, Ciudad');await expect(where).toContainText(String(zone.limit));
   await expect.poll(()=>mock.events.length).toBe(1);expect(mock.events[0].speed).toBeGreaterThan(zone.limit);expect(mock.events[0].fix).toBeTruthy();
   await page.evaluate(limit=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,(limit-1)/3.6),zone.limit);await expect(warning).toHaveCount(0);
  });
@@ -174,11 +191,10 @@ test('sin limite identificado no inventa alerta ni exige seleccion manual',async
 });
 
 test('el limite cambia automaticamente durante la misma ruta y se suspende sin datos',async({page})=>{
- await mockDriver(page);
- await page.route('**/api/road',route=>{
-  const {fix}=route.request().postDataJSON();const limit=fix.lng< -74.0798?50:fix.lng< -74.079?30:null;
-  return route.fulfill({json:{match:limit?{status:'known',roadId:String(limit),roadName:limit===50?'Avenida principal':'Calle residencial',zone:limit===50?'urbana':'escolar',label:limit===50?'Vía principal':'Vía residencial',limit,source:'OpenStreetMap'}:{status:'unknown',reason:'Sin dato registrado',limit:null}}});
- });
+ await mockDriver(page,{roads:[
+  {id:'1-0',name:'Avenida principal',zone:'urbana',label:'Vía principal',geometry:[[-74.0815,4.65],[-74.0798,4.65]]},
+  {id:'2-0',name:'Calle residencial',zone:'escolar',label:'Vía residencial',geometry:[[-74.0798,4.65],[-74.079,4.65]]},
+ ]});
  await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
  await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
  const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});

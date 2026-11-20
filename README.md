@@ -2,7 +2,7 @@
 
 ## Inicio directo de rutas
 
-El botón «Iniciar ruta» solicita ubicación e inicia el viaje sin formularios. No se asigna un vehículo automáticamente. Se utiliza la zona urbana (50 km/h) por defecto y el sector «Recorrido GPS»; no existe detección automática de zonas. Las coordenadas identifican el recorrido real.
+El botón «Iniciar ruta» solicita ubicación e inicia el viaje sin formularios. No se asigna un vehículo automáticamente. La app reconoce la vía en el teléfono y anuncia «Vas por…» con barrio y municipio. Aplica el límite preventivo SST del tramo: vía nacional 70, vía urbana 50, curvas 35 y colegios 30 km/h. Detalles en [docs/automatic-speed-limits.md](docs/automatic-speed-limits.md).
 
 Para activar este flujo en una base existente, ejecuta `supabase/migrations/003_quick_start.sql` después de las migraciones 001 y 002. Esta actualización permite viajes sin vehículo y mantiene el aislamiento por conductor.
 
@@ -68,7 +68,7 @@ La antigua base local no se elimina ni se importa automáticamente. Las cuentas 
 
 ## GPS y alertas
 
-La zona y el sector se seleccionan manualmente antes de salir. No hay detección automática de curvas ni zonas escolares. Mantén la app abierta: no hay seguimiento garantizado en segundo plano. Al recargar, se recuperan los puntos guardados del viaje abierto y el botón «Reanudar GPS» vuelve a solicitar la ubicación sin crear otro viaje. Si la señal se pierde, el mapa identifica la última ubicación conocida y deja de mostrar velocidad actual.
+La vía, la zona (nacional, urbana, curva o colegio) y el lugar se detectan automáticamente con el mapa de Atlántico en `public/map-tiles/`. Mantén la app abierta: no hay seguimiento garantizado en segundo plano. Al recargar, se recuperan los puntos guardados del viaje abierto y el botón «Reanudar GPS» vuelve a solicitar la ubicación sin crear otro viaje. Si la señal se pierde, el mapa identifica la última ubicación conocida y deja de mostrar velocidad actual.
 
 Durante el exceso hay alerta visual y un pitido cada cinco segundos; las notificaciones dependen de los permisos del navegador. Se registra un evento por episodio. Un nuevo episodio comienza al bajar al menos 3 km/h por debajo del límite. Se necesita conexión al servidor para guardar; los errores se muestran y se reintenta durante el exceso. Las posiciones pendientes se conservan solo en la memoria de la pestaña; no hay cola offline persistente. Para finalizar, la app intenta guardar los puntos pendientes primero. El mapa base usa teselas de OpenStreetMap con atribución visible y necesita conexión. La distancia es una estimación del trazado GPS, no una lectura del odómetro.
 
