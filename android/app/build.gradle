@@ -1,0 +1,27 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'co.salmaa.ruta'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'co.salmaa.ruta'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        // Dirección publicada de la app web. Se puede cambiar con -PappUrl=https://...
+        buildConfigField 'String', 'APP_URL', "\"${project.findProperty('appUrl') ?: 'https://salma20-beta.vercel.app/'}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
