@@ -16,8 +16,7 @@
     "test:ui": "playwright test",
     "maps:extract": "node --max-old-space-size=6144 scripts/extract-atlantico-map.mjs",
     "maps:build": "node --max-old-space-size=6144 scripts/build-road-catalog.mjs",
-    "test:maps": "node scripts/test-road-matcher.mjs && node scripts/test-automatic-limits-db.mjs",
-    "test:survey": "node scripts/test-zone-survey.mjs"
+    "test:maps": "node scripts/test-road-matcher.mjs && node scripts/test-automatic-limits-db.mjs"
   },
   "keywords": [],
   "author": "",

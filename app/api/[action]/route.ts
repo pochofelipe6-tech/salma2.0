@@ -1,4 +1,4 @@
-import {collectZoneCandidates,segmentNear} from '../../../lib/road-catalog';
+import {segmentNear} from '../../../lib/road-catalog';
 import {validFix} from '../../../lib/road-matcher';
 import {NextRequest,NextResponse} from 'next/server';
 import {createClient} from '../../../lib/supabase/server';
@@ -94,56 +94,7 @@ try{
     }
     return json({points});
   }
-  if(action==='confirmed-zones'&&req.method==='GET'){
-    // Zonas confirmadas por el administrador; el teléfono las prioriza sobre el mapa base.
-    const result=await supabase.from('survey_zones').select('id,name,zone,radius,geometry').eq('status','confirmed').limit(2000);
-    return json({zones:result.error?[]:result.data});
-  }
-  if(req.method==='GET'&&(action==='survey-count'||action==='zone-proposals')){
-    if(action==='survey-count'){
-      const trip=req.nextUrl.searchParams.get('trip');if(!positiveId(trip))return fail('Viaje inválido.');
-      const result=await supabase.from('survey_zones').select('id',{count:'exact',head:true}).eq('trip_id',Number(trip)).eq('user_id',user.id);
-      if(result.error)return fail('Ejecuta 009_route_zone_survey.sql en Supabase para registrar zonas.',503);
-      return json({count:result.count||0});
-    }
-    const {data:profile}=await supabase.from('profiles').select('role').eq('id',user.id).single();
-    if(profile?.role!=='admin')return fail('Solo el administrador puede revisar las zonas.',403);
-    const status=req.nextUrl.searchParams.get('status')||'pending',offset=Number(req.nextUrl.searchParams.get('offset')||0);
-    if(!['pending','confirmed','rejected'].includes(status)||!Number.isSafeInteger(offset)||offset<0)return fail('Filtro inválido.');
-    const result=await supabase.from('survey_zones').select('*',{count:'exact'}).eq('status',status).order('id',{ascending:false}).range(offset,offset+99);
-    if(result.error)return fail('Ejecuta 009_route_zone_survey.sql en Supabase para registrar zonas.',503);
-    return json({zones:result.data,count:result.count});
-  }
   if(req.method!=='POST')return fail('Método no permitido.',405);
-  if(action==='collect-mode'){
-    if(!positiveId(b.trip)||typeof b.enabled!=='boolean')return fail('Datos inválidos.');
-    const {data,error}=await supabase.from('trips').update({collect_zones:b.enabled}).eq('id',Number(b.trip)).eq('user_id',user.id).is('ended',null).select('id');
-    if(error)return fail('Ejecuta 009_route_zone_survey.sql en Supabase para registrar zonas.',503);
-    if(!data?.length)return fail('La ruta ya no está activa.',409);
-    return json({ok:true});
-  }
-  if(action==='survey'){
-    if(!positiveId(b.trip)||!validFix(b.fix)||!validFix(b.previous)||Date.parse(b.fix.recorded_at)>Date.now()+5000)return fail('Se necesitan posiciones GPS válidas.');
-    const {data:trip,error:tripError}=await supabase.from('trips').select('id,collect_zones,started').eq('id',Number(b.trip)).eq('user_id',user.id).is('ended',null).maybeSingle();
-    if(tripError)return fail('Ejecuta 009_route_zone_survey.sql en Supabase para registrar zonas.',503);
-    if(!trip?.collect_zones)return fail('Activa el registro de zonas en esta ruta.',409);
-    if(Date.parse(b.previous.recorded_at)<Date.parse(trip.started)-60000)return fail('Las posiciones no corresponden al horario de la ruta.');
-    const observedAt=b.fix.recorded_at;
-    const candidates=collectZoneCandidates(b.fix,b.previous).map(c=>({...c,name:c.name.slice(0,200),observed_at:observedAt,trip_id:trip.id,user_id:user.id}));
-    if(!candidates.length)return json({created:0});
-    const {data,error}=await supabase.from('survey_zones').upsert(candidates,{onConflict:'trip_id,candidate_key',ignoreDuplicates:true}).select('id');
-    if(error)databaseError(error);
-    const total=await supabase.from('survey_zones').select('id',{count:'exact',head:true}).eq('trip_id',trip.id).eq('user_id',user.id);
-    if(total.error)databaseError(total.error);
-    return json({created:data?.length||0,count:total.count||0});
-  }
-  if(action==='review-zone'){
-    if(!positiveId(b.id)||!['confirmed','rejected'].includes(String(b.status))||!Object.hasOwn(zones,String(b.zone))||typeof b.radius!=='number'||!Number.isInteger(b.radius)||b.radius<5||b.radius>40)return fail('Revisa la categoría y el margen del tramo (5 a 40 m).');
-    const {data:profile}=await supabase.from('profiles').select('role').eq('id',user.id).single();if(profile?.role!=='admin')return fail('Solo el administrador puede confirmar zonas.',403);
-    const {data,error}=await supabase.from('survey_zones').update({zone:b.zone,radius:b.radius,status:b.status,reviewed_by:user.id,reviewed_at:new Date().toISOString()}).eq('id',Number(b.id)).select('id');
-    if(error)databaseError(error);if(!data?.length)return fail('Zona no disponible.',404);
-    return json({ok:true});
-  }
   if(action==='delete-trip'){
     if(!positiveId(b.trip))return fail('Ruta no válida.');
     const {data:profile,error:profileError}=await supabase.from('profiles').select('role').eq('id',user.id).single();
@@ -194,8 +145,7 @@ try{
       if(vehicleError){if(vehicleError.code==='23505')return fail('La placa ya está registrada. Revisa los datos e inténtalo de nuevo.');databaseError(vehicleError)}
       vehicleId=vehicle!.id;
     }
-    const {data,error}=await supabase.from('trips').insert({user_id:user.id,vehicle_id:vehicleId,zone,sector,...(b.collectZones===true?{collect_zones:true}:{})}).select('id,started').single();
-    if(error?.code==='PGRST204'&&b.collectZones===true)return fail('Ejecuta 009_route_zone_survey.sql en Supabase para iniciar con registro de zonas.',503);
+    const {data,error}=await supabase.from('trips').insert({user_id:user.id,vehicle_id:vehicleId,zone,sector}).select('id,started').single();
     if(error?.code==='23502')return fail('Falta activar el inicio directo: ejecuta 003_quick_start.sql en Supabase.',503);
     if(error){if(error.code==='23505')return fail('Ya tienes un viaje activo.');databaseError(error)}
     return json({id:data!.id,started:data!.started,plate,model:existing?.model||model});
@@ -222,19 +172,9 @@ try{
   }else if(action==='event'){
     if(!positiveId(b.trip)||typeof b.speed!=='number'||!Number.isFinite(b.speed)||b.speed>300||!validFix(b.fix)||Date.now()-Date.parse(b.fix.recorded_at)>60000||Date.parse(b.fix.recorded_at)>Date.now()+5000)return fail('Evento GPS inválido.');
     // El teléfono identifica el tramo; el servidor comprueba que esté junto a la posición y que haya exceso.
-    let row:{zone:string;sector:string;survey_zone_id?:number};
-    if(b.surveyZoneId!==undefined){
-      if(!positiveId(b.surveyZoneId))return fail('Zona inválida.');
-      const {data:zone,error:zoneError}=await supabase.from('survey_zones').select('id,name,zone').eq('id',Number(b.surveyZoneId)).eq('status','confirmed').maybeSingle();
-      if(zoneError)databaseError(zoneError);
-      if(!zone||b.speed<=zones[zone.zone])return fail('No hay un exceso confirmado en la zona registrada.');
-      row={zone:zone.zone,sector:zone.name.slice(0,150),survey_zone_id:zone.id};
-    }else{
-      const segment=typeof b.segment==='string'&&b.segment.length<=40?segmentNear(b.segment,b.fix):undefined;
-      if(!segment||b.speed<=zones[segment.zone])return fail('No hay un exceso confirmado en un tramo identificado.');
-      row={zone:segment.zone,sector:`${segment.name} · ${segment.place}`.slice(0,150)};
-    }
-    const {error}=await supabase.from('events').insert({trip_id:Number(b.trip),user_id:user.id,...row,speed:b.speed,lat:b.fix.lat,lng:b.fix.lng});
+    const segment=typeof b.segment==='string'&&b.segment.length<=40?segmentNear(b.segment,b.fix):undefined;
+    if(!segment||b.speed<=zones[segment.zone])return fail('No hay un exceso confirmado en un tramo identificado.');
+    const {error}=await supabase.from('events').insert({trip_id:Number(b.trip),user_id:user.id,zone:segment.zone,sector:`${segment.name} · ${segment.place}`.slice(0,150),speed:b.speed,lat:b.fix.lat,lng:b.fix.lng});
     if(error){
       if(['PGRST204','PGRST205','42703','42P01'].includes(error.code))return fail('Ejecuta las migraciones 006 y 007 en Supabase para guardar alertas automáticas.',503);
       if(['42501','23503','23514','P0001'].includes(error.code))return fail('No se puede registrar el evento: revisa que el viaje siga activo y que esté cargado el catálogo 007.');

@@ -1,12 +1,17 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {LocateFixed,MapPin,Maximize2,Minimize2,Box} from 'lucide-react';
+import {LocateFixed,MapPin,Maximize2,Minimize2,Box,Moon,Sun} from 'lucide-react';
 import type * as Leaflet from 'leaflet';
 import type {RoutePoint} from '../lib/route-types';
-import BuildingsMap,{type BuildingView,type BuildingControls} from './buildings-map';
+import BuildingsMap,{ZONE_COLORS,type BuildingView,type BuildingControls,type MapTheme} from './buildings-map';
 import styles from './driver-screen.module.css';
 
-export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId,markerLabel='Tu ubicación'}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string;markerLabel?:string}){
+export type MapNav={speed:number|null;limit:number|null;roadName?:string;place?:string;zone?:string;roadId?:string};
+const LEGEND=[['nacional','Nacional 70'],['urbana','Urbana 50'],['curvas','Curva 35'],['escolar','Colegio 30']];
+const nightNow=()=>{const h=new Date().getHours();return h>=18||h<6};
+
+export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId,nav,markerLabel='Tu ubicación'}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string;nav?:MapNav;markerLabel?:string}){
+  const [theme,setTheme]=useState<MapTheme>(()=>nightNow()?'noche':'dia');
   const container=useRef<HTMLDivElement>(null),map=useRef<Leaflet.Map|null>(null),line=useRef<Leaflet.Polyline|null>(null),marker=useRef<Leaflet.Marker|null>(null),accuracy=useRef<Leaflet.Circle|null>(null),centered=useRef(false),frame=useRef<HTMLDivElement>(null);
   const latest=useRef({points,position});latest.current={points,position};
   const [ready,setReady]=useState(0),[follow,setFollow]=useState(true),[tilesError,setTilesError]=useState(false),[baseMap,setBaseMap]=useState<'loading'|'vector'|'standard'>('loading'),[expanded,setExpanded]=useState(false);
@@ -75,15 +80,23 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
   useEffect(()=>{const changed=()=>setExpanded(document.fullscreenElement===frame.current);document.addEventListener('fullscreenchange',changed);return()=>document.removeEventListener('fullscreenchange',changed)},[]);
   return <div ref={frame} className={styles.mapFrame}>
     <div ref={container} className={styles.mapCanvas} role="img" aria-hidden={!!buildingView} inert={!!buildingView} style={buildingView?{visibility:'hidden'}:undefined} aria-label="Mapa del recorrido GPS" data-points={points.length}/>
-    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} onDrag={()=>setFollow(false)} markerLabel={markerLabel} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(true)}}/>}
-    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?(markerLabel==='Tramo propuesto'?'Tramo a revisar':'Recorrido registrado'):'Esperando tu ubicación'}</div>
-    {zoneLabel&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}
+    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} theme={theme} roadId={nav?.roadId} onDrag={()=>setFollow(false)} markerLabel={markerLabel} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(true)}}/>}
+    {buildingView&&<>
+      <button className={styles.themeToggle} aria-label={theme==='noche'?'Cambiar a mapa de día':'Cambiar a mapa de noche'} title={theme==='noche'?'Mapa de día':'Mapa de noche'} onClick={()=>{const view=buildingControls.current?.view();if(view)setBuildingView(view);setTheme(theme==='noche'?'dia':'noche')}}>{theme==='noche'?<Sun size={17}/>:<Moon size={17}/>}</button>
+      <ul className={styles.legend3d} aria-label="Colores de las zonas">{LEGEND.map(([zone,label])=><li key={zone}><i style={{background:ZONE_COLORS[zone]}}/>{label}</li>)}</ul>
+      {nav&&tracking&&<div className={styles.hud3d} data-zone={nav.zone} data-excess={nav.speed!==null&&nav.limit!==null&&nav.speed>nav.limit} aria-label="Velocidad y vía actual">
+        <div className={styles.hudSpeed}><strong>{nav.speed===null?'—':Math.round(nav.speed)}</strong><small>km/h</small></div>
+        <div className={styles.hudLimit} aria-label={nav.limit===null?'Límite no disponible':`Límite ${nav.limit} km/h`}>{nav.limit??'—'}</div>
+        <div className={styles.hudRoad}><b>{nav.roadName||'Identificando la vía...'}</b>{nav.place&&<span>{nav.place}</span>}</div>
+      </div>}
+    </>}
+    <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
+    {zoneLabel&&!buildingView&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}
     <button className={styles.recenter} aria-label="Centrar en mi ubicación" disabled={!position&&!points.length} onClick={()=>{setFollow(true);centerOnPosition(true)}}><LocateFixed size={19}/></button>
     <button className={styles.mapExpand} aria-label={expanded?'Salir de pantalla completa':'Ampliar mapa'} title={expanded?'Salir de pantalla completa':'Ampliar mapa'} onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen().catch(()=>{});else void frame.current?.requestFullscreen?.().catch(()=>{})}}>{expanded?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>
-    <button className={styles.buildingsToggle} aria-label={buildingView?'Ver mapa en 2D':'Ver edificaciones en 3D'} aria-pressed={!!buildingView} title={buildingView?'Volver a 2D':'Ver edificios en 3D'} disabled={baseMap!=='vector'} onClick={toggleBuildings}><Box size={17}/>{buildingView?'2D':'3D'}</button>
-    {buildingView&&<span className={styles.buildingsNote}>Edificaciones 3D · Formas y alturas según datos disponibles</span>}
+    <button className={styles.buildingsToggle} aria-label={buildingView?'Ver mapa en 2D':'Ver mapa en 3D'} aria-pressed={!!buildingView} title={buildingView?'Volver a 2D':'Ver mapa en 3D'} disabled={baseMap!=='vector'} onClick={toggleBuildings}><Box size={17}/>{buildingView?'2D':'3D'}</button>
     {buildingsError&&<div className={styles.mapWarning} role="status">No se pudo cargar la vista 3D. Puedes continuar con el mapa de calles.</div>}
-    <span className={styles.mapProvider}>{baseMap==='vector'?'Mapa de calles':baseMap==='loading'?'Cargando mapa...':'Mapa estándar'}</span>
+    {!buildingView&&<span className={styles.mapProvider}>{baseMap==='vector'?'Mapa de calles':baseMap==='loading'?'Cargando mapa...':'Mapa estándar'}</span>}
     {!follow&&position&&<button className={styles.followAgain} onClick={()=>{setFollow(true);centerOnPosition()}}>Volver a mi ubicación</button>}
     {!position&&!points.length&&<div className={styles.mapIntro}><MapPin size={16}/><span>Inicia la ruta para activar tu ubicación.</span></div>}
     {tilesError&&<div className={styles.mapWarning} role="status">No se pudo cargar el mapa base. Revisa tu conexión; el GPS puede seguir registrando el recorrido.</div>}

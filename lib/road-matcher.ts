@@ -1,7 +1,6 @@
 import {zones} from './zones.ts';
-import type {ConfirmedZone,RoadFix,RoadMatch,RoadSegment} from './road-types';
+import type {RoadFix,RoadMatch,RoadSegment} from './road-types';
 
-export const zoneNames:Record<string,string>={urbana:'Zona urbana',nacional:'Vía nacional',curvas:'Curvas',escolar:'Escolar / residencial'};
 export const MAX_ACCURACY=35;
 const M=111195,CELL=.002,GENERIC=new Set(['Calle sin nombre','Vía sin nombre','Vía de servicio']);
 const unknown=(reason:string):RoadMatch=>({status:'unknown',reason,limit:null});
@@ -58,7 +57,7 @@ export function segmentMatch(s:RoadSegment,reason='Límite preventivo SST por ca
 export function createRoadTracker(index:SegmentIndex){
   let previous:RoadFix|null=null,current:RoadSegment|null=null,pending:{id:string;count:number}|null=null;
   function reset(){previous=null;current=null;pending=null}
-  function match(fix:RoadFix,speedKmh:number|null=null,confirmed:ConfirmedZone[]=[]):RoadMatch{
+  function match(fix:RoadFix,speedKmh:number|null=null):RoadMatch{
     if(!validFix(fix))return unknown('GPS inválido.');
     if(fix.accuracy>MAX_ACCURACY){current=null;pending=null;return unknown(`GPS impreciso: se necesita un margen de ${MAX_ACCURACY} m o menos.`)}
     const elapsed=previous?Date.parse(fix.recorded_at)-Date.parse(previous.recorded_at):Infinity;
@@ -67,12 +66,6 @@ export function createRoadTracker(index:SegmentIndex){
     if(!previous||elapsed>0)previous=fix;
     const radius=Math.max(20,Math.min(45,fix.accuracy+12));
     const candidates=index.near(fix.lat,fix.lng).map(segment=>({segment,...nearestOnRoad(fix,segment.geometry)})).filter(c=>c.distance<=radius);
-    // Zonas confirmadas por el administrador: tienen prioridad y se usa la más restrictiva.
-    const zone=confirmed.filter(z=>distanceToRoad(fix,z.geometry)<=z.radius&&(!prev||distanceToRoad(prev,z.geometry)<=z.radius+15)).sort((a,b)=>zones[a.zone]-zones[b.zone])[0];
-    if(zone){
-      const near=candidates.sort((a,b)=>a.distance-b.distance)[0]?.segment;
-      return {status:'known',reason:'Zona registrada y confirmada por el administrador.',roadId:`confirmed:${zone.id}`,surveyZoneId:zone.id,roadName:zone.name,place:near?.place,zone:zone.zone,label:zoneNames[zone.zone],limit:zones[zone.zone],source:'Zona confirmada'};
-    }
     if(!candidates.length){current=null;pending=null;return unknown('Sin vía identificada cerca de tu posición.')}
     const scored=candidates.map(c=>{
       let score=c.distance;

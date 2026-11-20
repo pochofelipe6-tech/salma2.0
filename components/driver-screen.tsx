@@ -1,5 +1,5 @@
 'use client';
-import type {ConfirmedZone,RoadMatch,RoadFix} from '../lib/road-types';
+import type {RoadMatch,RoadFix} from '../lib/road-types';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {ShieldCheck,MapPin,Navigation,Play,Square,LogOut,Car,Clock3,Route,Gauge,Volume2,VolumeX,Check,LoaderCircle,X,LocateFixed,AlertTriangle,CalendarDays} from 'lucide-react';
 import RouteMap from './route-map';
@@ -31,14 +31,12 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   const [completion,setCompletion]=useState<{distance:string;duration:string;count:number;plate:string}|null>(null);
   useEffect(()=>{if(completion){completionDialog.current?.showModal();const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}}},[completion]);
   const initial=data.trips.find(t=>t.user_id===data.user.id&&!t.ended)||null;
-  const [collectMode,setCollectMode]=useState(!!initial?.collect_zones),[collectBusy,setCollectBusy]=useState(false),[collected,setCollected]=useState(0),[collectError,setCollectError]=useState('');
-  const collectRef=useRef(!!initial?.collect_zones),surveyQueue=useRef<Array<{trip:number;fix:RoadFix;previous:RoadFix}>>([]),surveyTask=useRef<Promise<boolean>|null>(null),lastSurvey=useRef(0),surveyFailure=useRef('');
   const [trip,setTrip]=useState<DriverTrip|null>(initial),[tracking,setTracking]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saveError,setSaveError]=useState(''),[position,setPosition]=useState<RoutePoint|null>(null),[points,setPoints]=useState<RoutePoint[]>([]),[speed,setSpeed]=useState<number|null>(null),[gps,setGps]=useState('GPS desconectado'),[stale,setStale]=useState(true),[now,setNow]=useState(Date.now()),[finished,setFinished]=useState(false);
   const gpsRunning=useRef(false),watch=useRef<number|null>(null),tripRef=useRef<DriverTrip|null>(initial),queue=useRef<RoutePoint[]>([]),lastSaveFailure=useRef(''),flushing=useRef(false),lastSaved=useRef(0),lastSeen=useRef(0),lastTimestamp=useRef(0),sendingEvent=useRef(false),audio=useRef<AudioContext|null>(null),mounted=useRef(true),starting=useRef(false);
   tripRef.current=trip;
   const [road,setRoad]=useState<RoadMatch>({status:'unknown',reason:'Inicia la ruta para detectar el tramo.',limit:null});
   const previousFix=useRef<RoadFix|null>(null),lastSound=useRef(0),lastSpeech=useRef(0),alertedRoad=useRef('');
-  const engine=useRef<ReturnType<typeof createMapEngine>|null>(null),confirmed=useRef<ConfirmedZone[]>([]),lastFix=useRef<{point:RoadFix;km:number|null}|null>(null),roadRef=useRef(road);
+  const engine=useRef<ReturnType<typeof createMapEngine>|null>(null),lastFix=useRef<{point:RoadFix;km:number|null}|null>(null),roadRef=useRef(road);
   const [voice,setVoice]=useState(true),voiceRef=useRef(true),spoken=useRef({key:'',road:'',limit:null as number|null,at:0}),stable=useRef({key:'',count:0});
   roadRef.current=road;
   const activeZone={id:road.zone||'',name:road.label||'Zona por identificar',icon:'⚠️',limit:road.limit};
@@ -61,12 +59,6 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     return()=>clearInterval(timer);
   },[tracking]);
   useEffect(()=>{try{const saved=localStorage.getItem('salmaa-voz');if(saved==='off'){voiceRef.current=false;setVoice(false)}}catch{}},[]);
-  // Zonas confirmadas por el administrador: se cargan al iniciar y se refrescan cada 10 minutos.
-  useEffect(()=>{
-    if(!tracking)return;
-    const load=()=>void routeApi('confirmed-zones').then(r=>{confirmed.current=Array.isArray(r.zones)?r.zones:[]}).catch(()=>{});
-    load();const timer=setInterval(load,600000);return()=>clearInterval(timer);
-  },[tracking]);
   function mapEngine(){
     return engine.current??=createMapEngine(()=>{const last=lastFix.current;if(last&&gpsRunning.current&&roadRef.current.status!=='known')evaluate(last.point,last.km)});
   }
@@ -92,33 +84,8 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     // Durante un exceso habla la alerta de velocidad, no el cambio de vía.
     if(voiceRef.current&&!(km!==null&&km>match.limit))speak(text);
   }
-  useEffect(()=>{if(!tracking&&!queue.current.length&&!surveyQueue.current.length)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking,collectError,saveError,collected]);
+  useEffect(()=>{if(!tracking&&!queue.current.length)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking,saveError]);
 
-  useEffect(()=>{
-    if(!trip?.id||!collectMode)return;
-    let cancelled=false;
-    void routeApi('survey-count?trip='+trip.id).then(r=>{if(!cancelled&&tripRef.current?.id===trip.id)setCollected(n=>Math.max(n,r.count||0))}).catch(e=>{if(!cancelled)setCollectError((e as Error).message)});
-    return()=>{cancelled=true};
-  },[trip?.id,collectMode]);
-  async function flushSurvey():Promise<boolean>{
-    if(surveyTask.current)return surveyTask.current;
-    const task=(async()=>{
-      try{
-        while(surveyQueue.current.length){const item=surveyQueue.current[0];const result=await routeApi('survey',item);surveyQueue.current.shift();if(mounted.current)setCollected(n=>Math.max(n,result.count??n+(result.created||0)))}
-        surveyFailure.current='';if(mounted.current)setCollectError('');return true;
-      }catch(e){surveyFailure.current=(e as Error).message;if(mounted.current)setCollectError(surveyFailure.current);return false}
-    })();
-    surveyTask.current=task;try{return await task}finally{surveyTask.current=null}
-  }
-  async function toggleCollection(){
-    if(busy||collectBusy)return;setCollectBusy(true);setCollectError('');
-    try{
-      if(collectMode)collectRef.current=false;
-      if(trip){if(collectMode&&!await flushSurvey())throw new Error(surveyFailure.current);await routeApi('collect-mode',{trip:trip.id,enabled:!collectMode});setTrip({...trip,collect_zones:!collectMode})}
-      collectRef.current=!collectMode;setCollectMode(!collectMode);
-    }catch(e){collectRef.current=collectMode;setCollectError((e as Error).message)}finally{setCollectBusy(false)}
-  }
-  useEffect(()=>{if(!tracking||!collectMode)return;const timer=setInterval(()=>{void flushSurvey()},7000);return()=>clearInterval(timer)},[tracking,collectMode]);
   async function flush(){
     if(flushing.current)return false;
     const current=tripRef.current;if(!current||!queue.current.length)return true;
@@ -167,8 +134,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const velocity=p.coords.speed,km=velocity!==null&&Number.isFinite(velocity)&&velocity>=0?velocity*3.6:null;
     setSpeed(km);
     if(km===null)setGps('GPS conectado · velocidad no disponible');
-    const current=tripRef.current,previous=previousFix.current;previousFix.current=point;
-    if(collectRef.current&&previous&&point.accuracy<=25&&p.timestamp-lastSurvey.current>=5000){lastSurvey.current=p.timestamp;surveyQueue.current.push({trip:current.id,fix:point,previous});void flushSurvey()}
+    previousFix.current=point;
     lastFix.current={point,km};
     evaluate(point,km);
   }
@@ -180,7 +146,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const coverage=loader.coverage(point.lat,point.lng);
     if(coverage==='outside'){setRoad({status:'unknown',reason:'Fuera de la cobertura del mapa (Atlántico).',limit:null});return}
     // Aunque la cuadrícula actual siga descargando, los tramos de las vecinas ya cargadas sirven.
-    const match=tracker.match(point,km,confirmed.current);
+    const match=tracker.match(point,km);
     if(match.status!=='known'&&coverage!=='ready'){setRoad({status:'unknown',reason:coverage==='error'?'No se pudo descargar el mapa de la zona. Revisa la conexión.':'Descargando el mapa de la zona...',limit:null});return}
     setRoad(match);announce(match,km);
     if(match.status!=='known'||match.limit===null||km===null)return;
@@ -188,7 +154,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
       const key=match.roadName+':'+match.limit;
       if(alertedRoad.current!==key&&!sendingEvent.current){
         sendingEvent.current=true;
-        void routeApi('event',{trip:current.id,fix:point,speed:km,...(match.surveyZoneId?{surveyZoneId:match.surveyZoneId}:{segment:match.roadId})})
+        void routeApi('event',{trip:current.id,fix:point,speed:km,segment:match.roadId})
           .then(()=>{alertedRoad.current=key})
           .catch(()=>{if(mounted.current)setError('La alerta está activa, pero no se guardó en el historial. Revisa la conexión.')})
           .finally(()=>{sendingEvent.current=false});
@@ -217,9 +183,9 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     try{
       try{audio.current??=new AudioContext();await audio.current.resume()}catch{}
       const first=await locate();
-      const started=await routeApi('start',{plate,model,...(collectMode?{collectZones:true}:{})});
-      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:started.plate,model:started.model,driver:data.user.name,collect_zones:collectMode,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
-      queue.current=[];surveyQueue.current=[];lastSurvey.current=0;setCollected(0);setPoints([]);setPosition(null);setSpeed(null);
+      const started=await routeApi('start',{plate,model});
+      const current:DriverTrip={id:started.id,user_id:data.user.id,plate:started.plate,model:started.model,driver:data.user.name,zone:'urbana',sector:'Recorrido GPS',started:started.started||new Date().toISOString(),ended:null};
+      queue.current=[];setPoints([]);setPosition(null);setSpeed(null);
       setVehicleForm(false);await connectGPS(first,current);await onRefresh();
     }catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
@@ -229,10 +195,9 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     try{await connectGPS(await locate(),trip)}catch(e){setError((e as Error).message)}finally{setBusy(false);starting.current=false}
   }
   async function finish(){
-    if(!trip||busy||collectBusy)return;gpsRunning.current=false;setBusy(true);setError('');
+    if(!trip||busy)return;gpsRunning.current=false;setBusy(true);setError('');
     if(watch.current!==null)navigator.geolocation.clearWatch(watch.current);watch.current=null;lostGps('Ruta finalizada.');setTracking(false);stopSpeaking();
     try{
-      if(!await flushSurvey())throw new Error(surveyFailure.current+' Las propuestas siguen pendientes. Mantén esta pestaña abierta y vuelve a finalizar tras corregirlo.');
       if(flushing.current)throw new Error('Se está guardando el recorrido. Espera un momento y vuelve a finalizar.');
       if(!await flush())throw new Error(lastSaveFailure.current+' Mantén esta pestaña abierta y vuelve a finalizar después de corregirlo.');
       if(sendingEvent.current)throw new Error('Se está guardando una alerta. Espera un momento y vuelve a finalizar.');
@@ -282,22 +247,15 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
       {saveError&&<div className={styles.warning} role="status">{saveError}</div>}
       {finished&&<div className={styles.success} role="status"><Check size={18}/>Ruta finalizada. Tu viaje y las posiciones están guardados.</div>}
       <div className={styles.journeyGrid}>
-        <section className={styles.mapCard} aria-labelledby="route-map-title"><div className={styles.mapHead}><div><span className={styles.miniIcon}><Route size={18}/></span><h2 id="route-map-title">Tu ruta en tiempo real</h2></div><span className={styles.mapLegend}><i/> Recorrido GPS</span></div><RouteMap points={points} position={position} tracking={tracking} stale={stale} zoneId={detectedZone} zoneLabel={detectedZone?`${road.label} · ${road.limit} km/h`:undefined}/><div className={styles.mapFooter}><MapPin size={14}/><span>{position?`${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · precisión ±${Math.round(position.accuracy)} m`:'Tu ubicación aparecerá al iniciar la ruta.'}</span><span className={styles.privateNote}><ShieldCheck size={13}/> Tu recorrido, protegido</span></div></section>
+        <section className={styles.mapCard} aria-labelledby="route-map-title"><div className={styles.mapHead}><div><span className={styles.miniIcon}><Route size={18}/></span><h2 id="route-map-title">Tu ruta en tiempo real</h2></div><span className={styles.mapLegend}><i/> Recorrido GPS</span></div><RouteMap points={points} position={position} tracking={tracking} stale={stale} zoneId={detectedZone} zoneLabel={detectedZone?`${road.label} · ${road.limit} km/h`:undefined} nav={{speed:stale?null:speed,limit:road.limit,roadName:road.status==="known"?road.roadName:undefined,place:road.place,zone:detectedZone,roadId:road.roadId}}/><div className={styles.mapFooter}><MapPin size={14}/><span>{position?`${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · precisión ±${Math.round(position.accuracy)} m`:'Tu ubicación aparecerá al iniciar la ruta.'}</span><span className={styles.privateNote}><ShieldCheck size={13}/> Tu recorrido, protegido</span></div></section>
         <section className={styles.tripCard}>
           <div className={styles.tripIntro}><span className={styles.tripIcon}><Navigation size={24}/></span><span className={styles.tripBadge}>{tracking?'EN RUTA':trip?'RUTA PENDIENTE':'LISTO PARA SALIR'}</span></div>
           <h2>{tracking?'Buen camino.':trip?'Continúa tu recorrido.':'Tu próxima ruta empieza aquí.'}</h2><p>{tracking?'Tu ubicación se actualiza con el GPS. Nosotros te avisamos si excedes el límite.':trip?'Puedes reanudar el GPS o finalizar el viaje que dejaste abierto.':'Activa tu ubicación y deja que te acompañemos en cada kilómetro.'}</p>
           <div className={styles.speedMonitor+' '+(excess?styles.excess:'')}><span>VELOCIDAD ACTUAL</span><strong>{speed===null||stale?'—':Math.round(speed)}<small>km/h</small></strong><div>{excess?<><AlertTriangle size={15}/> Reduce la velocidad</>:<><ShieldCheck size={15}/>{tracking?(stale||speed===null?'Alertas en espera: falta velocidad fiable':limit===null?'Alertas en espera: límite no disponible':'Alertas de velocidad activas'):'La prevención va contigo'}</>}</div></div>
           {trip&&<div className={styles.tripDetails}><span><Car size={15}/><b>{trip.plate}{trip.model&&` · ${trip.model}`}</b></span><span><MapPin size={15}/>{trip.sector}</span></div>}
           <div className={styles.routeMetrics}><div><Route size={15}/><strong>{distance.toFixed(2)} <small>km</small></strong><span>Recorrido GPS</span></div><div><Clock3 size={15}/><strong>{trip?duration:'00:00:00'}</strong><span>Tiempo de ruta</span></div></div>
-          <div className={styles.surveyMode} data-active={collectMode}>
-            <button type="button" className={styles.surveyToggle} aria-pressed={collectMode} disabled={busy||collectBusy} onClick={()=>void toggleCollection()}>{collectBusy?<LoaderCircle size={18} className={styles.spin}/>:collectMode?<Check size={19}/>:<MapPin size={19}/>}<span>{collectBusy?'Guardando...':collectMode?'Desactivar registro de zonas':'Activar registro de zonas'}</span></button>
-            <p>{collectMode?'Inicia o continúa tu ruta. Guardaremos propuestas de los tramos que podamos identificar.':'Actívalo para recopilar posibles zonas durante tu ruta.'}</p>
-            <small>Las propuestas nuevas generarán alertas después de la confirmación del administrador.</small>
-            {collectMode&&<div role="status">{collected} propuestas guardadas{surveyQueue.current.length>0?' · Guardado pendiente':''}</div>}
-            {collectError&&<div role="alert">{collectError}</div>}
-          </div>
-          {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
-          {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy||collectBusy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
+          {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9\-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
+          {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
           <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.status==='known'?[road.roadName,road.place].filter(Boolean).join(' · '):road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Vía nacional 70 · urbana 50 · curvas 35 · colegios 30. Mapa de Atlántico basado en OpenStreetMap.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><button className={styles.soundTest} aria-pressed={voice} onClick={toggleVoice}>{voice?<Volume2 size={14}/>:<VolumeX size={14}/>}{voice?'Voz activada: te digo por dónde vas':'Voz desactivada'}</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>

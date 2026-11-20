@@ -51,14 +51,7 @@ assert.equal(validFix({lat:1}),false);
   assert.equal(t.match(fix(10.80009,-74.9956,2),30).roadName,'Calle A');
   assert.equal(t.match(fix(10.80001,-74.9954,3),30).roadName,'Calle A');
 }
-// Zona confirmada por el administrador: prioridad y límite más restrictivo.
-{
-  const t=tracker([seg('60-0','Avenida','nacional',[[-75,10.8],[-74.99,10.8]])]);
-  const confirmed=[{id:7,name:'Colegio confirmado',zone:'escolar',radius:20,geometry:[[-74.996,10.8],[-74.994,10.8]]}];
-  const result=t.match(fix(10.8,-74.995),40,confirmed);
-  assert.equal(result.surveyZoneId,7);assert.equal(result.limit,30);
-}
-console.log('PASS sintético: límites, imprecisión, cruces, calzadas, vía principal, cambio confirmado y zonas confirmadas.');
+console.log('PASS sintético: límites, imprecisión, cruces, calzadas, vía principal y cambio de vía.');
 
 // ---------- Recorridos simulados sobre el mapa real ----------
 const catalog=JSON.parse(readFileSync('public/map-tiles/index.json','utf8')),available=new Set(catalog.tiles),cache=new Map();

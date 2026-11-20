@@ -188,7 +188,5 @@ for(const [key,list] of tiles){
 }
 await writeFile('public/map-tiles/index.json',JSON.stringify({v:2,date,size:TILE,tiles:[...tiles.keys()].sort()}));
 await writeFile('public/map-tiles/LICENSE.md',`# Datos geográficos de Atlántico\n\n© OpenStreetMap contributors. Base de datos derivada de OpenStreetMap, distribuida bajo Open Database License (ODbL) 1.0.\n\n- Atribución y licencia: https://www.openstreetmap.org/copyright\n- Extracto original: https://download.geofabrik.de/south-america/colombia.html\n- Preparación reproducible: \`scripts/extract-atlantico-map.mjs\` y \`scripts/build-road-catalog.mjs\`.\n\nLos límites son preventivos SST por categoría (nacional 70, urbana 50, curva 35, colegio 30). No constituyen un inventario oficial de señalización.\n`);
-// Colegios para el registro de zonas (propuestas que revisa el administrador).
-await writeFile('assets/maps/atlantico-schools.json',JSON.stringify(schools.map(s=>({id:s.id,name:s.name,coordinates:s.center}))));
 const km=Object.fromEntries(Object.entries(stats.length).map(([k,v])=>[k+' ('+SPEED[k]+' km/h)',Math.round(v/1000)+' km']));
 console.log(JSON.stringify({vias:raw.roads.length,omitidas:skipped,tramos:segments.length,cuadriculas:tiles.size,megabytes:+(bytes/1e6).toFixed(1),mayorKB:Math.round(largest/1e3),longitudPorZona:km},null,2));

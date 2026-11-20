@@ -23,9 +23,12 @@ Las calles residenciales dentro de ciudades y pueblos son vía urbana (50). Si O
 2. Durante la ruta, el teléfono descarga las cuadrículas en ≈1,5 km alrededor y reconoce la vía en cada lectura GPS, sin esperar al servidor. Así la alerta funciona aunque la conexión sea lenta.
 3. El reconocimiento combina distancia, rumbo de marcha, sentido de las vías de una sola dirección y continuidad con la vía anterior. Un salto a una vía paralela sin cambio de rumbo se confirma con dos lecturas. Requiere precisión GPS de 35 m o mejor.
 4. Al haber exceso, el teléfono envía a `POST /api/event` el tramo identificado. El servidor comprueba con las mismas cuadrículas que el tramo esté junto a la posición GPS y que la velocidad supere su límite. Se guarda un evento por episodio y por vía.
-5. Las zonas confirmadas por el administrador (`GET /api/confirmed-zones`) tienen prioridad sobre el mapa base, y se aplica la más restrictiva.
 
-`next.config.mjs` incluye las cuadrículas en la función del servidor (`outputFileTracingIncludes`). No requiere migraciones nuevas: los eventos se guardan con `zone` y la base calcula `limit_speed` (migraciones 001 a 009).
+`next.config.mjs` incluye las cuadrículas en la función del servidor (`outputFileTracingIncludes`). No requiere migraciones nuevas: los eventos se guardan con `zone` y la base calcula `limit_speed`. El antiguo registro manual de zonas (migración 009) ya no se usa; sus tablas quedan en la base sin cambios.
+
+## Mapa 3D
+
+El botón 3D muestra relieve (AWS Terrain Tiles), cielo, edificios de OpenFreeMap con altura y color según su tamaño, y las vías de `public/map-tiles` coloreadas por zona con brillo; la vía actual se resalta. La cámara sigue al vehículo con el rumbo arriba, hay entrada cinematográfica, estela del recorrido, modo día/noche (automático por hora) y panel con velocidad, límite, vía y barrio.
 
 ## Voz y avisos
 
@@ -47,7 +50,7 @@ Fuente: https://download.geofabrik.de/south-america/colombia.html. Polígono dep
 
 ## Pruebas
 
-- `npm run test:maps`: casos sintéticos (cruces, calzadas paralelas, vía principal frente a calle de servicio, giros, zonas confirmadas) y recorridos simulados con ruido GPS de ±6 m sobre La Cordialidad, la Oriental, la Prosperidad y calles urbanas. Exige 90 % o más de lecturas en la vía correcta (actualmente 98–99,9 %).
+- `npm run test:maps`: casos sintéticos (cruces, calzadas paralelas, vía principal frente a calle de servicio y giros) y recorridos simulados con ruido GPS de ±6 m sobre La Cordialidad, la Oriental, la Prosperidad y calles urbanas. Exige 90 % o más de lecturas en la vía correcta (actualmente 98–99,9 %).
 - `npx playwright test tests/driver.spec.ts`: flujo, «Vas por», alerta con el límite de cada zona, cambio de límite y ausencia de alerta sin datos.
 - `npm run build`: compilación y verificación de que las cuadrículas están en la función de la API.
 
@@ -56,7 +59,3 @@ Fuente: https://download.geofabrik.de/south-america/colombia.html. Polígono dep
 - Depende de la calidad de OpenStreetMap: colegios o barrios no mapeados no se reconocen. El 90 % de las calles urbanas de Barranquilla tienen barrio asignado.
 - Requiere la app abierta y GPS con precisión de 35 m o mejor. El seguimiento en segundo plano no está garantizado.
 - Falta validar en campo con recorridos reales.
-
-## Registrar zonas del recorrido
-
-El modo de registro sigue disponible (migración 009). Propone tramos, colegios y curvas al administrador, que puede confirmarlos con su categoría y margen. Las zonas confirmadas se descargan al teléfono y tienen prioridad sobre la clasificación automática. `npm run test:survey` verifica propuestas, aislamiento, confirmación solo por el administrador y alertas posteriores.
