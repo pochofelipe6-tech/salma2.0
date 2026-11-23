@@ -179,6 +179,23 @@ for(const zone of [{id:'urbana',name:'Zona urbana',limit:50},{id:'nacional',name
  });
 }
 
+test('si entra a la via con exceso, anuncia la via al volver al limite',async({page})=>{
+ await page.addInitScript(()=>{const w=window as unknown as {spoken:string[];SalmaaAndroid:unknown};w.spoken=[];w.SalmaaAndroid={speak:(t:string)=>w.spoken.push(t),stopSpeaking:()=>{}}});
+ await mockDriver(page,{label:'Vía nacional',zone:'nacional'});await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
+ const spoken=()=>page.evaluate(()=>(window as unknown as {spoken:string[]}).spoken);
+ for(const lng of [-74.08,-74.0799])await page.evaluate(lng=>(window as unknown as GPSWindow).sendGps(4.65,lng,90/3.6),lng);
+ await expect(warning).toBeVisible();
+ await expect.poll(spoken).toContain('Reduce la velocidad. El límite es 70 kilómetros por hora.');
+ expect((await spoken()).some(t=>t.startsWith('Vas por'))).toBe(false);
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65036,-74.0798,60/3.6));
+ await expect(warning).toHaveCount(0);
+ await expect.poll(async()=>(await spoken()).filter(t=>t.startsWith('Vas por'))).toEqual(['Vas por Carrera 51B, Barrio de prueba, Ciudad. Vía nacional, límite 70 kilómetros por hora.']);
+});
+
 test('sin limite identificado no inventa alerta ni exige seleccion manual',async({page})=>{
  const mock=await mockDriver(page,{known:false});await page.goto('/');await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
  await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');

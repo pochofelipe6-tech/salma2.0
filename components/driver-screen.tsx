@@ -78,11 +78,12 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     const key=match.roadName+'|'+match.limit;
     stable.current=stable.current.key===key?{key,count:stable.current.count+1}:{key,count:1};
     if(stable.current.count<2||spoken.current.key===key||Date.now()-spoken.current.at<5000)return;
+    // Durante un exceso habla la alerta de velocidad; la vía queda pendiente y se anuncia al volver al límite.
+    if(km!==null&&km>match.limit)return;
     const roadChanged=spoken.current.road!==match.roadName,label=(match.label||'').replace(/ · /g,', ');
     const text=roadChanged?`Vas por ${spokenName(match.roadName)}${match.place?', '+match.place:''}. ${label}, límite ${match.limit} kilómetros por hora.`:`${label}. Límite ${match.limit} kilómetros por hora.`;
     spoken.current={key,road:match.roadName,limit:match.limit,at:Date.now()};
-    // Durante un exceso habla la alerta de velocidad, no el cambio de vía.
-    if(voiceRef.current&&!(km!==null&&km>match.limit))speak(text);
+    if(voiceRef.current)speak(text);
   }
   useEffect(()=>{if(!tracking&&!queue.current.length)return;const handler=(e:BeforeUnloadEvent)=>{e.preventDefault()};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[tracking,saveError]);
 
