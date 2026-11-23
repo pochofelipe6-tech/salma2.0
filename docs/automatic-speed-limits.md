@@ -1,6 +1,6 @@
 ﻿# Detección automática de vía y límite: Atlántico
 
-La app reconoce en el teléfono la vía por la que va el conductor, le dice dónde está («Vas por Autopista de La Cordialidad, Galapa») y alerta en pantalla, con pitido y voz, si supera el límite preventivo SST del tramo.
+La app reconoce en el teléfono la vía por la que va el conductor, le dice dónde está («Vas por Autopista de La Cordialidad, Galapa») y alerta en pantalla, con sirena y voz, si supera el límite preventivo SST del tramo.
 
 ## Límites SST
 
@@ -34,7 +34,7 @@ El botón 3D muestra relieve (AWS Terrain Tiles), cielo, edificios de OpenFreeMa
 
 - Al iniciar la ruta: «Iniciando ruta. Te diré por dónde vas».
 - Al cambiar de vía: «Vas por …, barrio, municipio. Vía nacional, límite 70 kilómetros por hora». Al cambiar solo el límite en la misma vía, anuncia la nueva zona (por ejemplo, zona escolar).
-- Durante un exceso: aviso en pantalla «Reduce la velocidad a N km/h», pitido cada 5 s y voz cada 15 s.
+- Durante un exceso: aviso en pantalla «Reduce la velocidad a N km/h», sirena cada 5 s y voz cada 15 s (la voz espera a que termine la sirena). Si entra a la vía con exceso, la anuncia al volver al límite.
 - El conductor puede desactivar la voz; la preferencia se guarda en el teléfono.
 
 ## Datos y actualización
