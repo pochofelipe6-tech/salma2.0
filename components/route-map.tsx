@@ -9,17 +9,27 @@ import styles from './driver-screen.module.css';
 export type MapNav={speed:number|null;limit:number|null;roadName?:string;place?:string;zone?:string;roadId?:string};
 const LEGEND=[['nacional','Nacional 70'],['urbana','Urbana 50'],['curvas','Curva 35'],['escolar','Colegio 30']];
 const nightNow=()=>{const h=new Date().getHours();return h>=18||h<6};
+// El 3D necesita WebGL; algunos teléfonos o navegadores lo tienen desactivado.
+function supportsWebGL(){
+  try{const canvas=document.createElement('canvas'),gl=canvas.getContext('webgl2')||canvas.getContext('webgl');gl?.getExtension('WEBGL_lose_context')?.loseContext();return !!gl}catch{return false}
+}
+const NO_WEBGL='Este dispositivo no tiene activada la aceleración gráfica (WebGL) que necesita el mapa 3D. Puedes seguir con el mapa 2D.';
+const FAILED_3D='No se pudo cargar la vista 3D. Revisa tu conexión y toca 3D para intentarlo de nuevo.';
 
 export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneId,nav,markerLabel='Tu ubicación'}:{points:RoutePoint[];position:RoutePoint|null;tracking:boolean;stale:boolean;zoneLabel?:string;zoneId?:string;nav?:MapNav;markerLabel?:string}){
   const [theme,setTheme]=useState<MapTheme>(()=>nightNow()?'noche':'dia');
   const container=useRef<HTMLDivElement>(null),map=useRef<Leaflet.Map|null>(null),line=useRef<Leaflet.Polyline|null>(null),marker=useRef<Leaflet.Marker|null>(null),accuracy=useRef<Leaflet.Circle|null>(null),centered=useRef(false),frame=useRef<HTMLDivElement>(null);
   const latest=useRef({points,position});latest.current={points,position};
   const [ready,setReady]=useState(0),[follow,setFollow]=useState(true),[tilesError,setTilesError]=useState(false),[baseMap,setBaseMap]=useState<'loading'|'vector'|'standard'>('loading'),[expanded,setExpanded]=useState(false);
-  const [buildingView,setBuildingView]=useState<BuildingView|null>(null),[buildingsError,setBuildingsError]=useState(false);
+  const [buildingView,setBuildingView]=useState<BuildingView|null>(null),[buildingsError,setBuildingsError]=useState('');
   const buildingControls=useRef<BuildingControls|null>(null);
   function toggleBuildings(){
-    if(buildingView){const view=buildingControls.current?.view();if(view)map.current?.setView([view.lat,view.lng],view.zoom,{animate:false});setBuildingView(null)}
-    else{const center=map.current?.getCenter();if(center){setBuildingsError(false);setBuildingView({lat:center.lat,lng:center.lng,zoom:map.current?.getZoom()||17})}}
+    if(buildingView){const view=buildingControls.current?.view();if(view)map.current?.setView([view.lat,view.lng],view.zoom,{animate:false});setBuildingView(null);return}
+    if(!supportsWebGL()){setBuildingsError(NO_WEBGL);return}
+    // No depende del mapa 2D: si aún no cargó, parte de la última posición o de Barranquilla.
+    const center=map.current?.getCenter(),p=latest.current.position||latest.current.points.at(-1);
+    setBuildingsError('');
+    setBuildingView(center?{lat:center.lat,lng:center.lng,zoom:map.current?.getZoom()||17}:p?{lat:p.lat,lng:p.lng,zoom:16}:{lat:10.98,lng:-74.82,zoom:12});
   }
   function centerOnPosition(resetZoom=false){
     if(buildingControls.current){buildingControls.current.recenter();return}
@@ -51,9 +61,11 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
         gl.setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs',import.meta.url).toString());
         vector=adapter.maplibreGL({style:'https://tiles.openfreemap.org/styles/liberty',attributionControl:false}).addTo(m);
         const rendered=vector.getMaplibreMap();
-        timeout=setTimeout(()=>{if(!disposed&&!rendered.isStyleLoaded())fallback()},12000);
+        // Solo pasa al mapa estándar si no carga el estilo; una cuadrícula o imagen que falle no cuenta.
+        let styleLoaded=false;rendered.once('style.load',()=>{styleLoaded=true});
+        timeout=setTimeout(()=>{if(!disposed&&!styleLoaded)fallback()},12000);
         rendered.once('load',()=>{if(disposed||raster)return;clearTimeout(timeout);setTilesError(false);setBaseMap('vector');container.current?.setAttribute('data-basemap','vector');m.attributionControl?.addAttribution('<a href="https://openfreemap.org" target="_blank" rel="noreferrer">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>')});
-        rendered.on('error',()=>{if(!disposed&&!rendered.isStyleLoaded())fallback()});
+        rendered.on('error',()=>{if(!disposed&&!styleLoaded)fallback()});
       }).catch(fallback);
       L.control.zoom({position:'bottomright',zoomInTitle:'Acercar mapa',zoomOutTitle:'Alejar mapa'}).addTo(m);
       L.control.scale({position:'bottomleft',imperial:false,maxWidth:100}).addTo(m);
@@ -80,7 +92,7 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
   useEffect(()=>{const changed=()=>setExpanded(document.fullscreenElement===frame.current);document.addEventListener('fullscreenchange',changed);return()=>document.removeEventListener('fullscreenchange',changed)},[]);
   return <div ref={frame} className={styles.mapFrame}>
     <div ref={container} className={styles.mapCanvas} role="img" aria-hidden={!!buildingView} inert={!!buildingView} style={buildingView?{visibility:'hidden'}:undefined} aria-label="Mapa del recorrido GPS" data-points={points.length}/>
-    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} theme={theme} roadId={nav?.roadId} onDrag={()=>setFollow(false)} markerLabel={markerLabel} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(true)}}/>}
+    {buildingView&&<BuildingsMap initialView={buildingView} points={points} position={position} stale={stale} follow={follow} theme={theme} roadId={nav?.roadId} onDrag={()=>setFollow(false)} markerLabel={markerLabel} onReady={controls=>{buildingControls.current=controls}} onError={()=>{setBuildingView(null);setBuildingsError(FAILED_3D)}}/>}
     {buildingView&&<>
       <button className={styles.themeToggle} aria-label={theme==='noche'?'Cambiar a mapa de día':'Cambiar a mapa de noche'} title={theme==='noche'?'Mapa de día':'Mapa de noche'} onClick={()=>{const view=buildingControls.current?.view();if(view)setBuildingView(view);setTheme(theme==='noche'?'dia':'noche')}}>{theme==='noche'?<Sun size={17}/>:<Moon size={17}/>}</button>
       <ul className={styles.legend3d} aria-label="Colores de las zonas">{LEGEND.map(([zone,label])=><li key={zone}><i style={{background:ZONE_COLORS[zone]}}/>{label}</li>)}</ul>
@@ -94,8 +106,8 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
     {zoneLabel&&!buildingView&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}
     <button className={styles.recenter} aria-label="Centrar en mi ubicación" disabled={!position&&!points.length} onClick={()=>{setFollow(true);centerOnPosition(true)}}><LocateFixed size={19}/></button>
     <button className={styles.mapExpand} aria-label={expanded?'Salir de pantalla completa':'Ampliar mapa'} title={expanded?'Salir de pantalla completa':'Ampliar mapa'} onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen().catch(()=>{});else void frame.current?.requestFullscreen?.().catch(()=>{})}}>{expanded?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>
-    <button className={styles.buildingsToggle} aria-label={buildingView?'Ver mapa en 2D':'Ver mapa en 3D'} aria-pressed={!!buildingView} title={buildingView?'Volver a 2D':'Ver mapa en 3D'} disabled={baseMap!=='vector'} onClick={toggleBuildings}><Box size={17}/>{buildingView?'2D':'3D'}</button>
-    {buildingsError&&<div className={styles.mapWarning} role="status">No se pudo cargar la vista 3D. Puedes continuar con el mapa de calles.</div>}
+    <button className={styles.buildingsToggle} aria-label={buildingView?'Ver mapa en 2D':'Ver mapa en 3D'} aria-pressed={!!buildingView} title={buildingView?'Volver a 2D':'Ver mapa en 3D'} onClick={toggleBuildings}><Box size={17}/>{buildingView?'2D':'3D'}</button>
+    {buildingsError&&<div className={styles.mapWarning} role="status">{buildingsError}</div>}
     {!buildingView&&<span className={styles.mapProvider}>{baseMap==='vector'?'Mapa de calles':baseMap==='loading'?'Cargando mapa...':'Mapa estándar'}</span>}
     {!follow&&position&&<button className={styles.followAgain} onClick={()=>{setFollow(true);centerOnPosition()}}>Volver a mi ubicación</button>}
     {!position&&!points.length&&<div className={styles.mapIntro}><MapPin size={16}/><span>Inicia la ruta para activar tu ubicación.</span></div>}

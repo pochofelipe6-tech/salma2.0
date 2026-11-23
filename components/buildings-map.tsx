@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import type {Map as GLMap,Marker,GeoJSONSource} from 'maplibre-gl';
+import type {Map as GLMap,Marker,GeoJSONSource,StyleSpecification} from 'maplibre-gl';
 import type {FeatureCollection,Feature,LineString,Polygon} from 'geojson';
 import {decodeTile,tilesAround,type TileData,type TileIndex} from '../lib/map-tiles';
 import type {RoutePoint} from '../lib/route-types';
@@ -20,6 +20,10 @@ const THEMES={
     light:{anchor:'viewport',color:'#a8c2ff',intensity:.5,position:[1.2,180,60]}},
 } as const;
 const DEM='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+// Respaldo si OpenFreeMap no responde: mapa estándar de OpenStreetMap (sin edificios) con relieve y vías por zona.
+const fallbackStyle=(theme:MapTheme):StyleSpecification=>({version:8,
+  sources:{osm:{type:'raster',tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>'}},
+  layers:[{id:'fondo',type:'background',paint:{'background-color':theme==='noche'?'#0b1026':'#eeeae3'}},{id:'osm',type:'raster',source:'osm',paint:theme==='noche'?{'raster-brightness-max':.4,'raster-saturation':-.5}:{}}]});
 const metres=(a:RoutePoint,b:RoutePoint)=>Math.hypot((b.lng-a.lng)*111195*Math.cos(a.lat*Math.PI/180),(b.lat-a.lat)*111195);
 const bearing=(a:RoutePoint,b:RoutePoint)=>(Math.atan2((b.lng-a.lng)*Math.cos(a.lat*Math.PI/180),b.lat-a.lat)*180/Math.PI+360)%360;
 const reducedMotion=()=>typeof window!=='undefined'&&window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -51,15 +55,26 @@ export default function BuildingsMap({initialView,points,position,stale,follow,t
       if(disposed||!container.current)return;
       gl.setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs',import.meta.url).toString());
       const t=THEMES[theme];
-      const m=new gl.Map({container:container.current,style:t.style,center:[initialView.lng,initialView.lat],zoom:Math.min(initialView.zoom,13.5),pitch:0,bearing:0,maxPitch:78,minZoom:3,maxZoom:20.5,attributionControl:{compact:true},canvasContextAttributes:{antialias:true}});
+      const build=(fallback:boolean)=>{
+      if(disposed||!container.current)return;
+      const m=new gl.Map({container:container.current,style:fallback?fallbackStyle(theme):t.style,center:[initialView.lng,initialView.lat],zoom:Math.min(initialView.zoom,13.5),pitch:0,bearing:0,maxPitch:78,minZoom:3,maxZoom:20.5,attributionControl:{compact:true},canvasContextAttributes:{antialias:true}});
       map.current=m;
+      container.current.dataset.basemap=fallback?'standard':'vector';
       // Sin botones de zoom/brújula: en 3D se usan gestos y «Centrar» endereza la cámara.
       m.on('dragstart',()=>latest.current.onDrag());
-      const fail=()=>{if(!disposed)latest.current.onError()};
-      timeout=setTimeout(()=>{if(!disposed&&!m.isStyleLoaded())fail()},15000);
-      m.on('error',()=>{if(!m.isStyleLoaded())fail()});
+      // Si el estilo de OpenFreeMap falla o tarda, se rehace el mapa con el respaldo; si también falla, se avisa.
+      // Una imagen o cuadrícula que falle después de cargar el estilo no cierra el mapa.
+      let failed=false,styleLoaded=false;
+      const fail=()=>{
+        if(disposed||failed)return;failed=true;clearTimeout(timeout);
+        if(fallback){latest.current.onError();return}
+        setTimeout(()=>{if(disposed||map.current!==m)return;m.remove();map.current=null;build(true)},0);
+      };
+      m.once('style.load',()=>{styleLoaded=true});
+      timeout=setTimeout(()=>{if(!styleLoaded)fail()},fallback?15000:12000);
+      m.on('error',()=>{if(!styleLoaded)fail()});
       m.once('load',()=>{
-        if(disposed)return;
+        if(disposed||failed)return;
         clearTimeout(timeout);
         // Las capas propias van encima de las calles y debajo de las etiquetas; el relieve, debajo de las calles.
         const layers=m.getStyle().layers,isRoad=(l:(typeof layers)[number])=>'source-layer' in l&&l['source-layer']==='transportation';
@@ -74,7 +89,7 @@ export default function BuildingsMap({initialView,points,position,stale,follow,t
         m.setLight(t.light as unknown as Parameters<GLMap['setLight']>[0]);
         // Edificios propios: altura real del mapa y color según la altura.
         for(const id of ['building','building-3d'])if(m.getLayer(id))m.setLayoutProperty(id,'visibility','none');
-        m.addLayer({id:'edificios-3d',type:'fill-extrusion',source:'openmaptiles','source-layer':'building',minzoom:13,paint:{
+        if(m.getSource('openmaptiles'))m.addLayer({id:'edificios-3d',type:'fill-extrusion',source:'openmaptiles','source-layer':'building',minzoom:13,paint:{
           'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],7],...t.buildings] as never,
           'fill-extrusion-height':['interpolate',['linear'],['zoom'],13,0,15,['coalesce',['get','render_height'],7]],
           'fill-extrusion-base':['interpolate',['linear'],['zoom'],13,0,15,['coalesce',['get','render_min_height'],0]],
@@ -105,7 +120,9 @@ export default function BuildingsMap({initialView,points,position,stale,follow,t
         latest.current.onReady({recenter:()=>{const p=latest.current.position||latest.current.points.at(-1);if(p)m.easeTo({center:[p.lng,p.lat],zoom:Math.max(m.getZoom(),16.5),pitch:62,bearing:heading.current??m.getBearing(),duration:reducedMotion()?0:900})},view:()=>({lat:m.getCenter().lat,lng:m.getCenter().lng,zoom:m.getZoom()})});
         setReady(true);
       });
-      observer=new ResizeObserver(()=>m.resize());observer.observe(container.current);
+      };
+      build(false);
+      observer=new ResizeObserver(()=>map.current?.resize());observer.observe(container.current);
     }).catch(()=>{if(!disposed)latest.current.onError()});
     return()=>{disposed=true;clearTimeout(timeout);observer?.disconnect();latest.current.onReady(null);marker.current?.remove();marker.current=null;map.current?.remove();map.current=null};
   },[initialView,theme]);

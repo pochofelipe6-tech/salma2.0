@@ -246,8 +246,39 @@ test('el GPS conserva el zoom elegido por el conductor',async({page})=>{
 test('vista 3D muestra edificaciones y permite volver al mapa 2D',async({page},testInfo)=>{
  await mockDriver(page);await page.goto('/');
  const toggle=page.getByRole('button',{name:'Ver mapa en 3D',exact:true});await expect(toggle).toBeEnabled({timeout:20000});
- await toggle.click();const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:20000});
+ await toggle.click();const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:20000});await expect(map3d).toHaveAttribute('data-basemap','vector');
  await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toHaveCount(0);
  await page.screenshot({path:testInfo.outputPath('buildings-3d.png'),fullPage:true});
  await page.getByRole('button',{name:'Ver mapa en 2D',exact:true}).click();await expect(map3d).toHaveCount(0);await expect(page.getByRole('img',{name:'Mapa del recorrido GPS'})).toBeVisible();
+});
+
+test('vista 3D usa el mapa de respaldo si OpenFreeMap no responde',async({page})=>{
+ await page.route('https://tiles.openfreemap.org/**',route=>route.abort());
+ await mockDriver(page);await page.goto('/');
+ await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
+ const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});
+ await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:30000});await expect(map3d).toHaveAttribute('data-basemap','standard');
+ await expect(page.getByRole('status').filter({hasText:'No se pudo cargar la vista 3D'})).toHaveCount(0);
+ await page.getByRole('button',{name:'Ver mapa en 2D',exact:true}).click();await expect(map3d).toHaveCount(0);
+});
+
+test('sin WebGL el boton 3D explica que el dispositivo no lo permite',async({page})=>{
+ await page.addInitScript(()=>{
+  const original=HTMLCanvasElement.prototype.getContext;
+  Object.defineProperty(HTMLCanvasElement.prototype,'getContext',{configurable:true,value:function(this:HTMLCanvasElement,type:string,options?:unknown){return type.startsWith('webgl')?null:original.call(this,type as '2d',options as CanvasRenderingContext2DSettings)}});
+ });
+ await mockDriver(page);await page.goto('/');
+ await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'aceleración gráfica (WebGL)'})).toBeVisible();
+ await expect(page.getByRole('img',{name:'Mapa 3D del recorrido'})).toHaveCount(0);
+});
+
+test('si fallan algunas cuadriculas al cargar, sigue el mapa de calles y el 3D abre',async({page})=>{
+ let failures=0;
+ await page.route('https://tiles.openfreemap.org/planet/**',route=>failures++<3?route.abort():route.fallback());
+ await mockDriver(page);await page.goto('/');
+ await expect(page.getByText('Mapa de calles',{exact:true})).toBeVisible({timeout:30000});expect(failures).toBeGreaterThan(0);
+ await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
+ const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});
+ await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:30000});await expect(map3d).toHaveAttribute('data-basemap','vector');
 });
