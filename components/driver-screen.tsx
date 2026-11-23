@@ -16,15 +16,34 @@ function createMapEngine(onLoad:()=>void){
 }
 const spokenName=(name:string)=>({'Calle sin nombre':'una calle sin nombre','Vía sin nombre':'una vía sin nombre','Vía de servicio':'una vía de servicio'} as Record<string,string>)[name]||name;
 // En la app Android (WebView) no existe speechSynthesis: la app expone la voz nativa como SalmaaAndroid.
-type AndroidVoice={speak:(text:string)=>void;stopSpeaking:()=>void};
-const androidVoice=()=>(window as unknown as {SalmaaAndroid?:AndroidVoice}).SalmaaAndroid;
+// Desde la versión 1.1 también pide el permiso y encender el GPS (ensureLocation).
+type AndroidBridge={speak:(text:string)=>void;stopSpeaking:()=>void;ensureLocation?:()=>void};
+const androidBridge=()=>(window as unknown as {SalmaaAndroid?:AndroidBridge}).SalmaaAndroid;
+const DEVICE_LOCATION_ERRORS:Record<string,string>={
+  permiso:'Ruta SST necesita el permiso de ubicación. Actívalo en Ajustes > Aplicaciones > Ruta SST > Permisos > Ubicación.',
+  gps:'Enciende el GPS (ubicación) del celular para iniciar la ruta.',
+};
+// En la app Android, antes de leer el GPS: pide el permiso y, si el GPS está apagado, pide encenderlo.
+// La app responde con window.salmaaLocationResult(ok, motivo). En el navegador no hace nada.
+function ensureDeviceLocation(){
+  const bridge=androidBridge();
+  if(!bridge?.ensureLocation)return Promise.resolve();
+  const w=window as unknown as {salmaaLocationResult?:(ok:boolean,reason:string)=>void};
+  return new Promise<void>((resolve,reject)=>{
+    // Si la app no responde (p. ej. el conductor se quedó en Ajustes), se intenta igual con el GPS.
+    const timer=setTimeout(()=>done(true,''),120000);
+    function done(ok:boolean,reason:string){clearTimeout(timer);w.salmaaLocationResult=undefined;if(ok)resolve();else reject(new Error(DEVICE_LOCATION_ERRORS[reason]||DEVICE_LOCATION_ERRORS.gps))}
+    w.salmaaLocationResult=done;
+    try{bridge.ensureLocation!()}catch{done(true,'')}
+  });
+}
 function speak(text:string){
   try{
-    const bridge=androidVoice();if(bridge){bridge.speak(text);return}
+    const bridge=androidBridge();if(bridge){bridge.speak(text);return}
     const synth=window.speechSynthesis;if(!synth)return;synth.cancel();const utterance=new SpeechSynthesisUtterance(text);utterance.lang='es-CO';synth.speak(utterance);
   }catch{}
 }
-function stopSpeaking(){try{const bridge=androidVoice();if(bridge)bridge.stopSpeaking();else window.speechSynthesis?.cancel()}catch{}}
+function stopSpeaking(){try{const bridge=androidBridge();if(bridge)bridge.stopSpeaking();else window.speechSynthesis?.cancel()}catch{}}
 
 export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;onRefresh:()=>Promise<void>;onLogout:()=>Promise<void>}){
   const [vehicleForm,setVehicleForm]=useState(false),[plate,setPlate]=useState(''),[model,setModel]=useState('');
@@ -160,8 +179,14 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   async function locate(){
     if(!window.isSecureContext)throw new Error('La ubicación necesita HTTPS o localhost. Abre la app desde una dirección segura.');
     if(!navigator.geolocation)throw new Error('Este navegador no tiene acceso a la ubicación.');
+    await ensureDeviceLocation();
     try{return await new Promise<GeolocationPosition>((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:0,timeout:15000}))}
-    catch{throw new Error('No se pudo obtener tu ubicación. Permite el GPS en el navegador y vuelve a intentarlo.')}
+    catch(e){
+      const code=(e as GeolocationPositionError).code;
+      throw new Error(code===1?'Permite el GPS (ubicación) para esta página en el navegador y vuelve a intentarlo.'
+        :code===2?'No hay señal de ubicación. Enciende el GPS del celular y vuelve a intentarlo.'
+        :'El GPS tardó demasiado en responder. Revisa que esté encendido, sal a un lugar abierto y vuelve a intentarlo.');
+    }
   }
   async function connectGPS(first:GeolocationPosition,current:DriverTrip){
     gpsRunning.current=true;previousFix.current=null;lastFix.current=null;mapEngine().tracker.reset();spoken.current={key:'',road:'',limit:null,at:0};alertedRoad.current='';tripRef.current=current;setTrip(current);setTracking(true);setFinished(false);lastSeen.current=Date.now();lastSaved.current=0;

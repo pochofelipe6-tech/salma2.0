@@ -3,12 +3,13 @@
 App nativa mínima que abre la versión publicada (`https://salma20-beta.vercel.app/`) en un WebView con:
 
 - Permiso de ubicación del sistema conectado al GPS de la página.
+- Desde la versión 1.1, al tocar «Iniciar ruta» o «Reanudar GPS» pide el permiso de ubicación y, si el GPS está apagado, muestra el aviso de Google «Activa la ubicación» para encenderlo de un toque. En celulares sin Google Play Services, o si el permiso quedó en «No volver a preguntar», ofrece abrir Ajustes. La página espera la respuesta (`SalmaaAndroid.ensureLocation` → `window.salmaaLocationResult`) antes de leer el GPS.
 - Pantalla siempre encendida mientras la app está abierta.
 - Voz nativa de Android (TextToSpeech, español) para «Vas por…» y las alertas: el WebView no trae `speechSynthesis`, así que la página usa el puente `window.SalmaaAndroid`.
 - Pitido de alerta sin necesidad de tocar la pantalla primero.
 - Enlaces externos en el navegador y pantalla de «Sin conexión» con botón para reintentar.
 
-La lógica, los mapas y las alertas son los de la web: al publicar en Vercel, la app se actualiza sin reinstalar.
+La lógica, los mapas y las alertas son los de la web: al publicar en Vercel, la app se actualiza sin reinstalar. Los cambios del código nativo (como el aviso para encender el GPS de la 1.1) sí requieren instalar la nueva APK; sube `versionCode` para que Android la instale como actualización.
 
 ## Requisitos
 

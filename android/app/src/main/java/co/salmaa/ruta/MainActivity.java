@@ -3,11 +3,16 @@ package co.salmaa.ruta;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -20,14 +25,23 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import com.google.android.gms.common.api.ResolvableApiException;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.Priority;
+
 import java.util.Locale;
 
 /**
  * Abre la app web publicada de Seguimiento de Ruta SST con acceso al GPS, pantalla encendida
- * durante la ruta y voz nativa (el WebView de Android no trae speechSynthesis).
+ * durante la ruta y voz nativa (el WebView de Android no trae speechSynthesis). Al iniciar o
+ * reanudar la ruta pide el permiso de ubicación y que el conductor encienda el GPS.
  */
 public class MainActivity extends Activity {
     private static final int LOCATION_REQUEST = 1;
+    private static final int ROUTE_PERMISSION_REQUEST = 2;
+    private static final int ENABLE_LOCATION_REQUEST = 3;
     private static final String[] LOCATION_PERMISSIONS = {
             Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
 
@@ -36,6 +50,8 @@ public class MainActivity extends Activity {
     private volatile boolean ttsReady;
     private GeolocationPermissions.Callback pendingGeolocation;
     private String pendingOrigin;
+    /** "permiso" o "gps" mientras el conductor está en Ajustes; se revisa al volver. */
+    private String waitingSettings;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -54,7 +70,7 @@ public class MainActivity extends Activity {
         settings.setUserAgentString(settings.getUserAgentString() + " SalmaaAndroid/" + BuildConfig.VERSION_NAME);
         CookieManager.getInstance().setAcceptCookie(true);
 
-        web.addJavascriptInterface(new VoiceBridge(), "SalmaaAndroid");
+        web.addJavascriptInterface(new AppBridge(), "SalmaaAndroid");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
@@ -104,10 +120,104 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != LOCATION_REQUEST || pendingGeolocation == null) return;
-        pendingGeolocation.invoke(pendingOrigin, hasLocationPermission(), false);
-        pendingGeolocation = null;
-        pendingOrigin = null;
+        if (pendingGeolocation != null) {
+            pendingGeolocation.invoke(pendingOrigin, hasLocationPermission(), false);
+            pendingGeolocation = null;
+            pendingOrigin = null;
+        }
+        if (requestCode != ROUTE_PERMISSION_REQUEST) return;
+        if (hasLocationPermission()) ensureLocationOn();
+        else if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            // Marcado «No volver a preguntar»: Android ya no muestra el diálogo, solo queda Ajustes.
+            Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null));
+            offerSettings("permiso", "Permite la ubicación",
+                    "Ruta SST necesita tu ubicación para seguir la ruta y avisarte si te pasas del límite. En Ajustes, toca Permisos > Ubicación > Permitir.", details);
+        } else reportLocation(false, "permiso");
+    }
+
+    /** Al iniciar o reanudar la ruta: paso 1, permiso de ubicación. */
+    private void ensureLocation() {
+        if (hasLocationPermission()) ensureLocationOn();
+        else requestPermissions(LOCATION_PERMISSIONS, ROUTE_PERMISSION_REQUEST);
+    }
+
+    /** Paso 2, GPS encendido: diálogo de Google de un toque o, sin Google Play Services, Ajustes de ubicación. */
+    private void ensureLocationOn() {
+        if (isLocationOn()) {
+            reportLocation(true, "");
+            return;
+        }
+        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000).build();
+        LocationSettingsRequest settings = new LocationSettingsRequest.Builder().addLocationRequest(request).setAlwaysShow(true).build();
+        try {
+            LocationServices.getSettingsClient(this).checkLocationSettings(settings)
+                    .addOnSuccessListener(this, result -> reportLocation(true, ""))
+                    .addOnFailureListener(this, error -> {
+                        if (error instanceof ResolvableApiException) {
+                            try {
+                                ((ResolvableApiException) error).startResolutionForResult(this, ENABLE_LOCATION_REQUEST);
+                                return;
+                            } catch (IntentSender.SendIntentException ignored) {
+                            }
+                        }
+                        offerLocationSettings();
+                    });
+        } catch (RuntimeException noPlayServices) {
+            offerLocationSettings();
+        }
+    }
+
+    private void offerLocationSettings() {
+        offerSettings("gps", "Enciende el GPS",
+                "Ruta SST necesita la ubicación del celular encendida para seguir la ruta y avisarte si te pasas del límite.",
+                new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+    }
+
+    private void offerSettings(String reason, String title, String message, Intent intent) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("Abrir ajustes", (dialog, which) -> {
+                    waitingSettings = reason;
+                    try {
+                        startActivity(intent);
+                    } catch (ActivityNotFoundException e) {
+                        waitingSettings = null;
+                        reportLocation(false, reason);
+                    }
+                })
+                .setNegativeButton("Cancelar", (dialog, which) -> reportLocation(false, reason))
+                .setOnCancelListener(dialog -> reportLocation(false, reason))
+                .show();
+    }
+
+    private boolean isLocationOn() {
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return manager.isLocationEnabled();
+        return manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+    }
+
+    /** Responde a la página: ok=true si ya puede leer el GPS; si no, el motivo ("permiso" o "gps"). */
+    private void reportLocation(boolean ok, String reason) {
+        web.evaluateJavascript("window.salmaaLocationResult&&window.salmaaLocationResult(" + ok + ",'" + reason + "')", null);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == ENABLE_LOCATION_REQUEST) reportLocation(resultCode == RESULT_OK || isLocationOn(), "gps");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (waitingSettings == null) return;
+        String reason = waitingSettings;
+        waitingSettings = null;
+        if (!reason.equals("permiso")) reportLocation(isLocationOn(), "gps");
+        else if (hasLocationPermission()) ensureLocationOn();
+        else reportLocation(false, "permiso");
     }
 
     private void showOffline(WebView view) {
@@ -144,8 +254,8 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    /** Voz nativa para los anuncios «Vas por…» y las alertas de velocidad. */
-    private class VoiceBridge {
+    /** Puente con la página: voz nativa para «Vas por…» y las alertas, y GPS listo antes de la ruta. */
+    private class AppBridge {
         @JavascriptInterface
         public void speak(String text) {
             if (ttsReady && text != null && !text.isEmpty()) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "salmaa");
@@ -154,6 +264,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void stopSpeaking() {
             if (ttsReady) tts.stop();
+        }
+
+        /** Llamado al tocar «Iniciar ruta» o «Reanudar GPS»; responde con window.salmaaLocationResult. */
+        @JavascriptInterface
+        public void ensureLocation() {
+            runOnUiThread(MainActivity.this::ensureLocation);
         }
     }
 }

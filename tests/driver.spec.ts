@@ -298,3 +298,43 @@ test('en 3D el mapa solo muestra velocidad y limite; la via queda en la barra de
  await expect(page.locator('section[aria-labelledby="route-map-title"]')).not.toContainText('Identificando la vía');
  await page.screenshot({path:testInfo.outputPath('hud-3d.png')});
 });
+
+type AppWindow=Window&{gpsOn:boolean;locationAsks:number;salmaaLocationResult?:(ok:boolean,reason:string)=>void};
+// App Android 1.1: el puente pide encender el GPS y responde con salmaaLocationResult.
+async function mockAndroidGps(page:Page){
+ await page.addInitScript(()=>{
+  const w=window as unknown as AppWindow&{SalmaaAndroid:unknown};w.gpsOn=false;w.locationAsks=0;
+  w.SalmaaAndroid={speak:()=>{},stopSpeaking:()=>{},ensureLocation:()=>{w.locationAsks++;setTimeout(()=>w.salmaaLocationResult?.(w.gpsOn,w.gpsOn?'':'gps'),50)}};
+ });
+}
+
+test('en la app Android, iniciar ruta pide encender el GPS y no crea el viaje si sigue apagado',async({page})=>{
+ await mockAndroidGps(page);const mock=await mockDriver(page);await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByRole('alert').filter({hasText:'Enciende el GPS (ubicación) del celular'})).toBeVisible();
+ expect(mock.starts).toBe(0);expect(await page.evaluate(()=>(window as unknown as AppWindow).locationAsks)).toBe(1);
+ await page.evaluate(()=>{(window as unknown as AppWindow).gpsOn=true});
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Finalizar ruta',exact:true})).toBeVisible();
+ expect(mock.starts).toBe(1);expect(await page.evaluate(()=>(window as unknown as AppWindow).locationAsks)).toBe(2);
+});
+
+test('en la app Android, reanudar la ruta tambien pide encender el GPS',async({page})=>{
+ await mockAndroidGps(page);await page.addInitScript(()=>{(window as unknown as AppWindow).gpsOn=true});
+ const mock=await mockDriver(page,{resume:true});await page.goto('/');
+ await page.getByRole('button',{name:'Reanudar GPS',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Finalizar ruta',exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>(window as unknown as AppWindow).locationAsks)).toBe(1);expect(mock.starts).toBe(0);
+});
+
+test('en el navegador con el GPS apagado explica que hay que encenderlo',async({page})=>{
+ const mock=await mockDriver(page);
+ await page.addInitScript(()=>{Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition:(_ok:PositionCallback,fail:PositionErrorCallback)=>fail({code:2,message:'Unavailable',PERMISSION_DENIED:1,POSITION_UNAVAILABLE:2,TIMEOUT:3}),watchPosition:()=>1,clearWatch:()=>{}}})});
+ await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByRole('alert').filter({hasText:'Enciende el GPS del celular'})).toBeVisible();expect(mock.starts).toBe(0);
+});
