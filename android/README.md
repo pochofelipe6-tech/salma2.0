@@ -23,11 +23,11 @@ cd android
 ./gradlew assembleDebug -PappUrl=https://otra-direccion.vercel.app/
 ```
 
-El APK queda en `app/build/outputs/apk/debug/app-debug.apk`, firmado con la clave de depuración. Para publicarlo en Google Play hay que crear una firma de publicación (`assembleRelease` con keystore propio).
+El APK queda en `app/build/outputs/apk/debug/app-debug.apk`, firmado con la clave de depuración. Para publicarlo en la web, cópialo a `public/RutaSST.apk` y súbelo a `main`. Para publicarlo en Google Play hay que crear una firma de publicación (`assembleRelease` con keystore propio).
 
 ## Instalar en el celular
 
-1. Pasa el APK al teléfono (cable USB, Drive, WhatsApp o correo) y ábrelo.
+1. Desde el celular, abre https://salma20-beta.vercel.app/RutaSST.apk en Chrome y abre el archivo descargado. También puedes pasar el APK por cable USB, Drive, WhatsApp o correo.
 2. Android pedirá permitir «Instalar apps desconocidas» para la aplicación con la que lo abriste. Acéptalo e instala.
 3. Abre «Ruta SST», permite la ubicación («Mientras se usa la app» y «Ubicación precisa») e inicia sesión.
 
