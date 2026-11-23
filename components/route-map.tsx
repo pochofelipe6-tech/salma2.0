@@ -6,7 +6,7 @@ import type {RoutePoint} from '../lib/route-types';
 import BuildingsMap,{ZONE_COLORS,type BuildingView,type BuildingControls,type MapTheme} from './buildings-map';
 import styles from './driver-screen.module.css';
 
-export type MapNav={speed:number|null;limit:number|null;roadName?:string;place?:string;zone?:string;roadId?:string};
+export type MapNav={speed:number|null;limit:number|null;zone?:string;roadId?:string};
 const LEGEND=[['nacional','Nacional 70'],['urbana','Urbana 50'],['curvas','Curva 35'],['escolar','Colegio 30']];
 const nightNow=()=>{const h=new Date().getHours();return h>=18||h<6};
 // El 3D necesita WebGL; algunos teléfonos o navegadores lo tienen desactivado.
@@ -56,7 +56,9 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
         raster.on('tileerror',()=>{if(!disposed)setTilesError(true)});raster.on('load',()=>{if(!disposed)setTilesError(false)});
         setBaseMap('standard');
       };
-      void Promise.all([import('@maplibre/maplibre-gl-leaflet'),import('maplibre-gl')]).then(([adapter,gl])=>{
+      // Sin WebGL el mapa vectorial falla a medias y deja la capa rota: se usa directamente el estándar.
+      if(!supportsWebGL())fallback();
+      else void Promise.all([import('@maplibre/maplibre-gl-leaflet'),import('maplibre-gl')]).then(([adapter,gl])=>{
         if(disposed)return;
         gl.setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs',import.meta.url).toString());
         vector=adapter.maplibreGL({style:'https://tiles.openfreemap.org/styles/liberty',attributionControl:false}).addTo(m);
@@ -96,11 +98,10 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
     {buildingView&&<>
       <button className={styles.themeToggle} aria-label={theme==='noche'?'Cambiar a mapa de día':'Cambiar a mapa de noche'} title={theme==='noche'?'Mapa de día':'Mapa de noche'} onClick={()=>{const view=buildingControls.current?.view();if(view)setBuildingView(view);setTheme(theme==='noche'?'dia':'noche')}}>{theme==='noche'?<Sun size={17}/>:<Moon size={17}/>}</button>
       <ul className={styles.legend3d} aria-label="Colores de las zonas">{LEGEND.map(([zone,label])=><li key={zone}><i style={{background:ZONE_COLORS[zone]}}/>{label}</li>)}</ul>
-      {nav&&tracking&&<div className={styles.hud3d} data-zone={nav.zone} data-excess={nav.speed!==null&&nav.limit!==null&&nav.speed>nav.limit} aria-label="Velocidad y vía actual">
+      {/* Solo velocidad y límite: la vía se muestra en la barra «Vas por» de arriba para no tapar el mapa. */}
+      {nav&&tracking&&<div className={styles.hud3d} data-zone={nav.zone} data-excess={nav.speed!==null&&nav.limit!==null&&nav.speed>nav.limit} aria-label="Velocidad y límite actual">
         <div className={styles.hudSpeed}><strong>{nav.speed===null?'—':Math.round(nav.speed)}</strong><small>km/h</small></div>
-        <div className={styles.hudLimit} aria-label={nav.limit===null?'Límite no disponible':`Límite ${nav.limit} km/h`}>{nav.limit??'—'}</div>
-        <div className={styles.hudRoad}><b>{nav.roadName||'Identificando la vía...'}</b>{nav.place&&<span>{nav.place}</span>}</div>
-      </div>}
+        <div className={styles.hudLimit} aria-label={nav.limit===null?'Límite no disponible':`Límite ${nav.limit} km/h`}>{nav.limit??'—'}</div>      </div>}
     </>}
     <div className={styles.mapStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{tracking?(!position?'Buscando tu ubicación':stale?'Última ubicación conocida':position.accuracy>60?'Ubicación aproximada':'Ubicación en vivo'):points.length?'Recorrido registrado':'Esperando tu ubicación'}</div>
     {zoneLabel&&!buildingView&&<div className={styles.mapZoneBadge} data-zone={zoneId}><LocateFixed size={15}/><span>Zona actual<b>{zoneLabel}</b></span></div>}

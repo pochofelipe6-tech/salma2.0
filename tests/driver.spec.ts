@@ -268,6 +268,7 @@ test('sin WebGL el boton 3D explica que el dispositivo no lo permite',async({pag
   Object.defineProperty(HTMLCanvasElement.prototype,'getContext',{configurable:true,value:function(this:HTMLCanvasElement,type:string,options?:unknown){return type.startsWith('webgl')?null:original.call(this,type as '2d',options as CanvasRenderingContext2DSettings)}});
  });
  await mockDriver(page);await page.goto('/');
+ await expect(page.getByText('Mapa estándar',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
  await expect(page.getByRole('status').filter({hasText:'aceleración gráfica (WebGL)'})).toBeVisible();
  await expect(page.getByRole('img',{name:'Mapa 3D del recorrido'})).toHaveCount(0);
@@ -281,4 +282,19 @@ test('si fallan algunas cuadriculas al cargar, sigue el mapa de calles y el 3D a
  await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
  const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});
  await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:30000});await expect(map3d).toHaveAttribute('data-basemap','vector');
+});
+
+test('en 3D el mapa solo muestra velocidad y limite; la via queda en la barra de arriba',async({page},testInfo)=>{
+ await mockDriver(page,{known:false});await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65,-74.08,10));
+ await expect(page.getByRole('region',{name:'Vas por'})).toContainText('Identificando la vía...');
+ await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
+ await expect(page.getByRole('img',{name:'Mapa 3D del recorrido'})).toHaveAttribute('data-buildings','ready',{timeout:20000});
+ const hud=page.getByLabel('Velocidad y límite actual',{exact:true});
+ await expect(hud).toBeVisible();await expect(hud).toContainText('36');
+ await expect(page.locator('section[aria-labelledby="route-map-title"]')).not.toContainText('Identificando la vía');
+ await page.screenshot({path:testInfo.outputPath('hud-3d.png')});
 });

@@ -105,14 +105,13 @@
 .legend3d li{display:flex;align-items:center;gap:7px}.legend3d i{width:18px;height:4px;border-radius:3px}
 .buildingsCanvas[data-theme=noche]~.legend3d{background:#0b1430e6;color:#d7e3ff}
 .buildingsCanvas[data-theme=noche]~.themeToggle{background:#0b1430;color:#ffd76a;border-color:#2a3a6a}
-.hud3d{--zone:#3d8bff;position:absolute;z-index:660;left:14px;right:70px;bottom:40px;max-width:430px;display:flex;align-items:center;gap:11px;padding:10px 13px;border:1px solid #ffffff26;border-radius:20px;background:#071a3fdb;backdrop-filter:blur(8px);color:#fff;box-shadow:0 10px 30px #0007;pointer-events:none}
+.hud3d{--zone:#3d8bff;position:absolute;z-index:660;left:14px;bottom:40px;display:flex;align-items:center;gap:11px;padding:10px 13px;border:1px solid #ffffff26;border-radius:20px;background:#071a3fdb;backdrop-filter:blur(8px);color:#fff;box-shadow:0 10px 30px #0007;pointer-events:none}
 .hud3d[data-zone=nacional]{--zone:#12d98a}.hud3d[data-zone=curvas]{--zone:#ffa62b}.hud3d[data-zone=escolar]{--zone:#c46bff}
 .hudSpeed{display:grid;place-items:center;flex-shrink:0;width:66px;height:66px;border:4px solid var(--zone);border-radius:50%;box-shadow:0 0 18px var(--zone),inset 0 0 12px #0006;line-height:1}
 .hudSpeed strong{font-size:25px;font-weight:800;letter-spacing:-1px}.hudSpeed small{margin-top:-12px;font-size:9px;opacity:.8}
 .hud3d[data-excess=true]{border-color:#ff3b4e88}.hud3d[data-excess=true] .hudSpeed{border-color:#ff3b4e;box-shadow:0 0 24px #ff3b4e;animation:hudAlert .7s ease-in-out infinite alternate}
 @keyframes hudAlert{to{box-shadow:0 0 6px #ff3b4e;transform:scale(1.06)}}
 .hudLimit{display:grid;place-items:center;flex-shrink:0;width:46px;height:46px;border:5px solid #e3202f;border-radius:50%;background:#fff;color:#111;font-size:17px;font-weight:800}
-.hudRoad{display:grid;min-width:0;line-height:1.3}.hudRoad b{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.hudRoad span{overflow:hidden;font-size:11px;opacity:.75;text-overflow:ellipsis;white-space:nowrap}
 .hud3d~.followAgain{bottom:128px}
-@media(max-width:390px){.hud3d{left:10px;right:58px;gap:8px;padding:8px 10px}.hudSpeed{width:56px;height:56px}.hudSpeed strong{font-size:21px}.hudLimit{width:40px;height:40px;font-size:15px}.legend3d{font-size:9px;padding:6px 8px}}
+@media(max-width:390px){.hud3d{left:10px;gap:8px;padding:8px 10px}.hudSpeed{width:56px;height:56px}.hudSpeed strong{font-size:21px}.hudLimit{width:40px;height:40px;font-size:15px}.legend3d{font-size:9px;padding:6px 8px}}
 @media(prefers-reduced-motion:reduce){.vehicle3d span,.hud3d[data-excess=true] .hudSpeed{animation:none}}

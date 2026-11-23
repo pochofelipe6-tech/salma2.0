@@ -6,6 +6,7 @@ import RouteMap from './route-map';
 import {routeApi,routeZones,routeDistance,type DriverData,type DriverTrip,type RoutePoint} from '../lib/route-types';
 import {createRoadTracker,createSegmentIndex} from '../lib/road-matcher';
 import {createTileLoader} from '../lib/tile-loader';
+import {ALARM_MS,playAlarm} from '../lib/alert-sound';
 import styles from './driver-screen.module.css';
 
 // Motor de reconocimiento en el teléfono: cuadrículas del mapa + seguimiento de la vía.
@@ -102,22 +103,15 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
     finally{flushing.current=false}
   }
   useEffect(()=>{if(!tracking)return;const timer=setInterval(()=>{void flush()},7000);return()=>clearInterval(timer)},[tracking]);
-  function beep(){
-    try{const ctx=audio.current;if(!ctx||ctx.state!=='running')return;
-      for(let i=0;i<3;i++){
-        const oscillator=ctx.createOscillator(),gain=ctx.createGain(),start=ctx.currentTime+i*.24;
-        oscillator.connect(gain);gain.connect(ctx.destination);oscillator.type='sine';oscillator.frequency.setValueAtTime(i===1?1040:780,start);
-        gain.gain.setValueAtTime(0,start);gain.gain.linearRampToValueAtTime(.16,start+.02);gain.gain.exponentialRampToValueAtTime(.001,start+.18);
-        oscillator.start(start);oscillator.stop(start+.2);oscillator.onended=()=>{oscillator.disconnect();gain.disconnect()};
-      }
-    }catch{}
+  function alarm(){
+    try{const ctx=audio.current;if(!ctx||ctx.state!=='running')return;playAlarm(ctx)}catch{}
   }
   useEffect(()=>{
     if(!excess)return;
-    // Pitido cada 5 s y aviso por voz cada 15 s mientras dure el exceso.
+    // Sirena cada 5 s y aviso por voz cada 15 s mientras dure el exceso; la voz espera a que termine la sirena.
     const sound=()=>{
-      if(Date.now()-lastSound.current>=5000){beep();lastSound.current=Date.now()}
-      if(voiceRef.current&&Date.now()-lastSpeech.current>=15000){lastSpeech.current=Date.now();speak(`Reduce la velocidad. El límite es ${roadRef.current.limit} kilómetros por hora.`)}
+      if(Date.now()-lastSound.current>=5000){alarm();lastSound.current=Date.now()}
+      if(voiceRef.current&&Date.now()-lastSound.current>=ALARM_MS&&Date.now()-lastSpeech.current>=15000){lastSpeech.current=Date.now();speak(`Reduce la velocidad. El límite es ${roadRef.current.limit} kilómetros por hora.`)}
     };
     sound();const timer=setInterval(sound,1000);return()=>{clearInterval(timer);lastSpeech.current=0};
   },[excess]);
@@ -248,7 +242,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
       {saveError&&<div className={styles.warning} role="status">{saveError}</div>}
       {finished&&<div className={styles.success} role="status"><Check size={18}/>Ruta finalizada. Tu viaje y las posiciones están guardados.</div>}
       <div className={styles.journeyGrid}>
-        <section className={styles.mapCard} aria-labelledby="route-map-title"><div className={styles.mapHead}><div><span className={styles.miniIcon}><Route size={18}/></span><h2 id="route-map-title">Tu ruta en tiempo real</h2></div><span className={styles.mapLegend}><i/> Recorrido GPS</span></div><RouteMap points={points} position={position} tracking={tracking} stale={stale} zoneId={detectedZone} zoneLabel={detectedZone?`${road.label} · ${road.limit} km/h`:undefined} nav={{speed:stale?null:speed,limit:road.limit,roadName:road.status==="known"?road.roadName:undefined,place:road.place,zone:detectedZone,roadId:road.roadId}}/><div className={styles.mapFooter}><MapPin size={14}/><span>{position?`${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · precisión ±${Math.round(position.accuracy)} m`:'Tu ubicación aparecerá al iniciar la ruta.'}</span><span className={styles.privateNote}><ShieldCheck size={13}/> Tu recorrido, protegido</span></div></section>
+        <section className={styles.mapCard} aria-labelledby="route-map-title"><div className={styles.mapHead}><div><span className={styles.miniIcon}><Route size={18}/></span><h2 id="route-map-title">Tu ruta en tiempo real</h2></div><span className={styles.mapLegend}><i/> Recorrido GPS</span></div><RouteMap points={points} position={position} tracking={tracking} stale={stale} zoneId={detectedZone} zoneLabel={detectedZone?`${road.label} · ${road.limit} km/h`:undefined} nav={{speed:stale?null:speed,limit:road.limit,zone:detectedZone,roadId:road.roadId}}/><div className={styles.mapFooter}><MapPin size={14}/><span>{position?`${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · precisión ±${Math.round(position.accuracy)} m`:'Tu ubicación aparecerá al iniciar la ruta.'}</span><span className={styles.privateNote}><ShieldCheck size={13}/> Tu recorrido, protegido</span></div></section>
         <section className={styles.tripCard}>
           <div className={styles.tripIntro}><span className={styles.tripIcon}><Navigation size={24}/></span><span className={styles.tripBadge}>{tracking?'EN RUTA':trip?'RUTA PENDIENTE':'LISTO PARA SALIR'}</span></div>
           <h2>{tracking?'Buen camino.':trip?'Continúa tu recorrido.':'Tu próxima ruta empieza aquí.'}</h2><p>{tracking?'Tu ubicación se actualiza con el GPS. Nosotros te avisamos si excedes el límite.':trip?'Puedes reanudar el GPS o finalizar el viaje que dejaste abierto.':'Activa tu ubicación y deja que te acompañemos en cada kilómetro.'}</p>
@@ -257,7 +251,7 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
           <div className={styles.routeMetrics}><div><Route size={15}/><strong>{distance.toFixed(2)} <small>km</small></strong><span>Recorrido GPS</span></div><div><Clock3 size={15}/><strong>{trip?duration:'00:00:00'}</strong><span>Tiempo de ruta</span></div></div>
           {!trip&&vehicleForm&&<form id="start-route-form" className={styles.vehicleForm} onSubmit={event=>{event.preventDefault();void begin()}}><label>Placa<input autoFocus required minLength={5} maxLength={10} pattern="[A-Za-z0-9\-]{5,10}" placeholder="ABC123" value={plate} disabled={busy} onChange={event=>{const value=event.target.value.toUpperCase().replace(/\s/g,'');setPlate(value);const saved=data.vehicles.find(v=>v.plate===value);if(saved)setModel(saved.model)}}/></label><label>Marca y modelo<input required maxLength={100} placeholder="Renault Duster 2024" value={model} disabled={busy} onChange={event=>setModel(event.target.value)}/></label><p>Estos datos aparecerán en el panel del administrador.</p></form>}
           {!trip?<button className={styles.startButton} type={vehicleForm?'submit':'button'} form={vehicleForm?'start-route-form':undefined} onClick={event=>{if(!vehicleForm){event.preventDefault();setVehicleForm(true)}}} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={18}/>:<Play size={18} fill="currentColor"/>}{busy?'Conectando GPS...':'Iniciar ruta'}<Navigation size={17}/></button>:<>{!tracking&&<button className={styles.startButton} onClick={()=>void resume()} disabled={busy}>{busy?<LoaderCircle className={styles.spin} size={17}/>:<LocateFixed size={17}/>}Reanudar GPS</button>}<button className={styles.finishButton} disabled={busy} onClick={()=>void finish()}>{busy?<LoaderCircle className={styles.spin} size={16}/>:<Square size={15}/>}Finalizar ruta</button></>}
-          <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.status==='known'?[road.roadName,road.place].filter(Boolean).join(' · '):road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Vía nacional 70 · urbana 50 · curvas 35 · colegios 30. Mapa de Atlántico basado en OpenStreetMap.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();beep()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><button className={styles.soundTest} aria-pressed={voice} onClick={toggleVoice}>{voice?<Volume2 size={14}/>:<VolumeX size={14}/>}{voice?'Voz activada: te digo por dónde vas':'Voz desactivada'}</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
+          <div className={styles.automaticLimit} role="status"><span><LocateFixed size={15}/>Límites preventivos SST · Detección automática</span><strong>{road.limit===null?'Límite no disponible':road.limit+' km/h · '+road.label}</strong><p>{road.status==='known'?[road.roadName,road.place].filter(Boolean).join(' · '):road.reason}</p>{road.postedLimit&&<p>Límite registrado en el mapa: {road.postedLimit} km/h. Respeta la señalización.</p>}<small>Vía nacional 70 · urbana 50 · curvas 35 · colegios 30. Mapa de Atlántico basado en OpenStreetMap.</small></div><button className={styles.soundTest} onClick={async()=>{try{audio.current??=new AudioContext();await audio.current.resume();alarm()}catch{setError('El navegador no pudo reproducir el sonido. Revisa el volumen y los permisos.')}}}><Volume2 size={14}/>Probar sonido de alerta</button><button className={styles.soundTest} aria-pressed={voice} onClick={toggleVoice}>{voice?<Volume2 size={14}/>:<VolumeX size={14}/>}{voice?'Voz activada: te digo por dónde vas':'Voz desactivada'}</button><div className={styles.gpsStatus}><span className={tracking&&!stale?styles.liveDot:styles.offDot}/>{gps}</div>
         </section>
       </div>
       <section className={styles.limits} aria-labelledby="limits-title"><div className={styles.sectionTitle}><h2 id="limits-title"><ShieldCheck size={25}/>Límites que protegen</h2><span>Protocolo preventivo SST</span></div><div className={styles.limitGrid}>{routeZones.map(z=><div key={z.id} data-zone={z.id} data-active={detectedZone===z.id} aria-current={detectedZone===z.id?'true':undefined} className={styles.limitCard+(detectedZone===z.id?' '+styles.detectedLimit:'')}><span className={styles.zoneIcon}>{z.icon}</span><div><h3>{z.name}</h3><b>{z.limit}<small> km/h</small></b></div><span className={styles.zoneTag}>{detectedZone===z.id?<><LocateFixed size={13}/>Zona actual</>:'Referencia preventiva'}</span></div>)}</div><p className={styles.limitNote}><Volume2 size={14}/>Alerta sonora al superar el límite registrado del tramo. Las alertas usan estos límites preventivos SST según la categoría identificada. No sustituyen la señalización de la vía.</p></section>
