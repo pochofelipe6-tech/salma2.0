@@ -10,8 +10,8 @@ android {
         applicationId 'co.salmaa.ruta'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '1.1'
+        versionCode 3
+        versionName '1.2'
         // Dirección publicada de la app web. Se puede cambiar con -PappUrl=https://...
         buildConfigField 'String', 'APP_URL', "\"${project.findProperty('appUrl') ?: 'https://salma20-beta.vercel.app/'}\""
     }

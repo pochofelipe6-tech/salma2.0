@@ -8,13 +8,18 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -24,6 +29,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import com.google.android.gms.common.api.ResolvableApiException;
 import com.google.android.gms.location.LocationRequest;
@@ -52,16 +58,67 @@ public class MainActivity extends Activity {
     private String pendingOrigin;
     /** "permiso" o "gps" mientras el conductor está en Ajustes; se revisa al volver. */
     private String waitingSettings;
+    /** Color de las barras del sistema (azul de la app). */
+    private static final int BAR_COLOR = 0xFF052866;
+    private FrameLayout root;
+    private View fullscreenView;
+    private WebChromeClient.CustomViewCallback fullscreenCallback;
 
-    @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // El conductor necesita ver la velocidad y las alertas sin que la pantalla se apague.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        web = new WebView(this);
-        setContentView(web);
+        // La app dibuja detrás de las barras del sistema (obligatorio desde Android 15) y deja su espacio con
+        // relleno, para que la hora y la batería no tapen la barra «Vas por».
+        root = new FrameLayout(this);
+        root.setBackgroundColor(BAR_COLOR);
+        setContentView(root);
+        drawBehindSystemBars();
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int left, top, right, bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = bars.left; top = bars.top; right = bars.right; bottom = bars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(left, top, right, bottom);
+            return insets;
+        });
+
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
+        web = createWebView();
+        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        tts = new TextToSpeech(this, status -> {
+            if (status != TextToSpeech.SUCCESS) return;
+            if (tts.setLanguage(new Locale("es", "CO")) < 0) tts.setLanguage(new Locale("es"));
+            ttsReady = true;
+        });
+
+        if (!hasLocationPermission()) requestPermissions(LOCATION_PERMISSIONS, LOCATION_REQUEST);
+        if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) web.loadUrl(BuildConfig.APP_URL);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void drawBehindSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+    }
+
+    /** Crea el visor de la página (también al recuperarlo si el motor web se cae). */
+    @SuppressLint("SetJavaScriptEnabled")
+    private WebView createWebView() {
+        WebView web = new WebView(this);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -82,6 +139,23 @@ public class MainActivity extends Activity {
                     requestPermissions(LOCATION_PERMISSIONS, LOCATION_REQUEST);
                 }
             }
+
+            // Botón «Ampliar mapa»: la página pide pantalla completa y la app muestra ese elemento encima de todo.
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (fullscreenView != null) {
+                    callback.onCustomViewHidden();
+                    return;
+                }
+                fullscreenView = view;
+                fullscreenCallback = callback;
+                root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+
+            @Override
+            public void onHideCustomView() {
+                exitFullscreen();
+            }
         });
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -101,16 +175,29 @@ public class MainActivity extends Activity {
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) showOffline(view);
             }
-        });
 
-        tts = new TextToSpeech(this, status -> {
-            if (status != TextToSpeech.SUCCESS) return;
-            if (tts.setLanguage(new Locale("es", "CO")) < 0) tts.setLanguage(new Locale("es"));
-            ttsReady = true;
+            // Si el motor web se cae (p. ej. sin memoria con el mapa 3D), se recrea y recarga en vez de cerrar la app.
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                if (view != MainActivity.this.web) return true;
+                exitFullscreen();
+                root.removeView(view);
+                view.destroy();
+                MainActivity.this.web = createWebView();
+                root.addView(MainActivity.this.web, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                MainActivity.this.web.loadUrl(BuildConfig.APP_URL);
+                return true;
+            }
         });
+        return web;
+    }
 
-        if (!hasLocationPermission()) requestPermissions(LOCATION_PERMISSIONS, LOCATION_REQUEST);
-        if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) web.loadUrl(BuildConfig.APP_URL);
+    private void exitFullscreen() {
+        if (fullscreenView == null) return;
+        root.removeView(fullscreenView);
+        fullscreenView = null;
+        if (fullscreenCallback != null) fullscreenCallback.onCustomViewHidden();
+        fullscreenCallback = null;
     }
 
     private boolean hasLocationPermission() {
@@ -237,7 +324,8 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
+        if (fullscreenView != null) exitFullscreen();
+        else if (web.canGoBack()) web.goBack();
         else super.onBackPressed();
     }
 
