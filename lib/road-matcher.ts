@@ -48,7 +48,7 @@ export type SegmentIndex=ReturnType<typeof createSegmentIndex>;
 const baseId=(s:RoadSegment)=>s.id.split('-')[0];
 const sameRoad=(a:RoadSegment,b:RoadSegment)=>baseId(a)===baseId(b)||(a.name===b.name&&!GENERIC.has(a.name));
 export function segmentMatch(s:RoadSegment,reason='Límite preventivo SST por categoría del tramo.'):RoadMatch{
-  return {status:'known',reason,roadId:s.id,roadName:s.name,place:s.place,zone:s.zone,label:s.label,limit:zones[s.zone],postedLimit:s.posted||undefined,source:'OpenStreetMap'};
+  return {status:'known',reason,roadId:s.id,roadName:s.name,place:s.place,zone:s.zone,label:s.label,kind:s.kind,limit:zones[s.zone],postedLimit:s.posted||undefined,source:'OpenStreetMap'};
 }
 
 // Sigue la vía del vehículo: distancia, rumbo de marcha, sentido de las vías de una sola

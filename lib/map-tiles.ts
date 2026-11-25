@@ -4,7 +4,8 @@ import type {RoadSegment,Zone} from './road-types';
 export const TILE_SIZE=0.02;
 const ZONES:Zone[]=['urbana','nacional','curvas','escolar'];
 type Row=[string,number,number,number,number,number,number,number,number[]];
-export type TileData={v:number;date:string;s:string[];r:Row[]};
+// p: lugares del mapa (colegios, iglesias...): [tipo, nombre, x·1e5, y·1e5]. Opcional: cuadrículas anteriores no lo traen.
+export type TileData={v:number;date:string;s:string[];r:Row[];p?:[number,number,number,number][]};
 export type TileIndex={v:number;date:string;size:number;tiles:string[]};
 
 export const tileKey=(lng:number,lat:number)=>`${Math.floor(lng/TILE_SIZE)}_${Math.floor(lat/TILE_SIZE)}`;
@@ -21,4 +22,13 @@ export function decodeTile(data:TileData):RoadSegment[]{
     for(let i=0;i+1<flat.length;i+=2){x+=flat[i];y+=flat[i+1];geometry.push([x/1e5,y/1e5])}
     return {id,name:data.s[name],zone:ZONES[zone],label:data.s[label],place:data.s[place],kind:data.s[kind],posted,oneway,geometry};
   });
+}
+
+// Tipos de lugar en el mismo orden que scripts/build-road-catalog.mjs.
+export const PLACE_KINDS=['colegio','universidad','iglesia','centro_comercial','salud','policia','bomberos','alcaldia','mercado','terminal','deporte'] as const;
+export type PlaceKind=typeof PLACE_KINDS[number];
+export type Place={kind:PlaceKind;name:string;lng:number;lat:number};
+export function decodePlaces(data:TileData):Place[]{
+  if(!data||!Array.isArray(data.p)||!Array.isArray(data.s))return [];
+  return data.p.filter(p=>Array.isArray(p)&&PLACE_KINDS[p[0]]).map(([kind,name,x,y])=>({kind:PLACE_KINDS[kind],name:data.s[name]||'',lng:x/1e5,lat:y/1e5}));
 }

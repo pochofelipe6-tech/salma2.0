@@ -6,13 +6,22 @@ import RouteMap from './route-map';
 import {routeApi,routeZones,routeDistance,type DriverData,type DriverTrip,type RoutePoint} from '../lib/route-types';
 import {createRoadTracker,createSegmentIndex} from '../lib/road-matcher';
 import {createTileLoader} from '../lib/tile-loader';
+import {createSchoolIndex,withOfficialSchool,type OfficialSchools} from '../lib/school-zones';
 import {ALARM_MS,playAlarm} from '../lib/alert-sound';
 import styles from './driver-screen.module.css';
 
-// Motor de reconocimiento en el teléfono: cuadrículas del mapa + seguimiento de la vía.
+// Motor de reconocimiento en el teléfono: cuadrículas del mapa + seguimiento de la vía + colegios oficiales
+// (zona escolar a 80 m), que se reintentan cada 30 s si no hay conexión.
 function createMapEngine(onLoad:()=>void){
   const index=createSegmentIndex();
-  return {tracker:createRoadTracker(index),loader:createTileLoader(index,onLoad)};
+  let schools=createSchoolIndex(null),schoolsReady=false,schoolsTried=0;
+  function ensureSchools(){
+    if(schoolsReady||Date.now()-schoolsTried<30000)return;
+    schoolsTried=Date.now();
+    void fetch('/map-tiles/colegios-oficiales.json').then(r=>r.ok?r.json():Promise.reject(new Error(String(r.status))))
+      .then((data:OfficialSchools)=>{schools=createSchoolIndex(data);schoolsReady=true;onLoad()}).catch(()=>{});
+  }
+  return {tracker:createRoadTracker(index),loader:createTileLoader(index,onLoad),schools:()=>{ensureSchools();return schools}};
 }
 const spokenName=(name:string)=>({'Calle sin nombre':'una calle sin nombre','Vía sin nombre':'una vía sin nombre','Vía de servicio':'una vía de servicio'} as Record<string,string>)[name]||name;
 // En la app Android (WebView) no existe speechSynthesis: la app expone la voz nativa como SalmaaAndroid.
@@ -155,12 +164,12 @@ export default function DriverScreen({data,onRefresh,onLogout}:{data:DriverData;
   // Reconoce la vía en el teléfono (sin esperar al servidor) y registra el exceso una vez por episodio.
   function evaluate(point:RoadFix,km:number|null){
     const current=tripRef.current;if(!current||!mounted.current)return;
-    const {tracker,loader}=mapEngine();
+    const {tracker,loader,schools}=mapEngine();
     void loader.ensure(point.lat,point.lng);
     const coverage=loader.coverage(point.lat,point.lng);
     if(coverage==='outside'){setRoad({status:'unknown',reason:'Fuera de la cobertura del mapa (Atlántico).',limit:null});return}
     // Aunque la cuadrícula actual siga descargando, los tramos de las vecinas ya cargadas sirven.
-    const match=tracker.match(point,km);
+    const match=withOfficialSchool(tracker.match(point,km),point.lat,point.lng,schools());
     if(match.status!=='known'&&coverage!=='ready'){setRoad({status:'unknown',reason:coverage==='error'?'No se pudo descargar el mapa de la zona. Revisa la conexión.':'Descargando el mapa de la zona...',limit:null});return}
     setRoad(match);announce(match,km);
     if(match.status!=='known'||match.limit===null||km===null)return;

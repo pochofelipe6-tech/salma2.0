@@ -103,3 +103,21 @@ assert.equal(lookup(carrera46.geometry[0][1],carrera46.geometry[0][0]).limit,50)
 assert.ok(tileKey(-74.8,10.98)&&available.size>100);
 assert.equal(failures,0,'Algún grupo de vías quedó por debajo del 90 % de reconocimiento.');
 console.log('PASS: reconocimiento en recorridos simulados y clasificación de vías nacionales y urbanas.');
+
+// ---------- Colegios oficiales (lib/school-zones.ts) ----------
+const {createSchoolIndex,withOfficialSchool,zoneAt}=await import('../lib/school-zones.ts');
+const schoolIndex=createSchoolIndex({v:1,date:'2026-11-25',license:'CC BY-SA 4.0',attribution:'prueba',s:[['Institución Educativa Prueba',-74.9,10.65]]});
+const at=metres=>[10.65,-74.9+metres/(111195*Math.cos(10.65*Math.PI/180))];
+const urbanMatch={status:'known',reason:'',roadId:'1-0',roadName:'Calle 10',zone:'urbana',label:'Zona urbana',kind:'residential',limit:50};
+const near=withOfficialSchool(urbanMatch,...at(60),schoolIndex);
+assert.equal(near.zone,'escolar');assert.equal(near.limit,30);assert.equal(near.label,'Zona escolar · Institución Educativa Prueba');
+assert.equal(withOfficialSchool(urbanMatch,...at(120),schoolIndex),urbanMatch,'A 120 m no es zona escolar.');
+assert.equal(withOfficialSchool({...urbanMatch,kind:'motorway',zone:'nacional',limit:70},...at(10),schoolIndex).zone,'nacional','En autopista no hay zona escolar.');
+assert.equal(zoneAt({zone:'urbana',kind:'residential'},...at(30),schoolIndex),'escolar');
+assert.equal(zoneAt({zone:'nacional',kind:'motorway'},...at(30),schoolIndex),'nacional');
+assert.equal(createSchoolIndex({v:2,s:'dañado'}).near(10.65,-74.9),null,'Un archivo inválido no genera zonas.');
+// Archivo publicado: colegios dentro del Atlántico y con nombre.
+const officialFile=JSON.parse(readFileSync('public/map-tiles/colegios-oficiales.json','utf8'));
+assert.ok(officialFile.s.length>300&&officialFile.license==='CC BY-SA 4.0');
+assert.ok(officialFile.s.every(([name,lng,lat])=>name&&lng>-75.4&&lng<-74.6&&lat>10.2&&lat<11.2));
+console.log('PASS: zona escolar por colegios oficiales ('+officialFile.s.length+' sedes en archivo aparte).');

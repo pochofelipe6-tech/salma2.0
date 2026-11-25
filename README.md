@@ -104,6 +104,8 @@ Una respuesta 503 de /api/state indica un problema del servidor; sin sesion y co
 
 La nueva version consulta limites por tramo con el GPS y el catalogo OSM incluido. Ejecutar `supabase/enable-automatic-limits.sql` en Supabase antes de guardar eventos automaticos. Ver [docs/automatic-speed-limits.md](docs/automatic-speed-limits.md) para activar, actualizar datos y conocer la cobertura. No requiere una API de mapas de pago. Los tramos sin dato se muestran como limite no disponible.
 
+La zona escolar usa los colegios de OpenStreetMap y las sedes oficiales del Ministerio de Educación y de la Gobernación del Atlántico (datos.gov.co, CC BY-SA 4.0), ubicadas por su dirección; hay zona escolar en 22 de los 25 municipios. Los mapas 2D y 3D muestran colegios, iglesias, centros comerciales, salud, policía y demás infraestructura del Atlántico, y completan los edificios que OpenStreetMap no tiene con las huellas de Microsoft (ODbL). Fuentes, licencias y cómo regenerar los datos: [docs/automatic-speed-limits.md](docs/automatic-speed-limits.md).
+
 ## Mapa vectorial
 
 El mapa usa MapLibre GL con OpenFreeMap (estilo Liberty) para calles y etiquetas nitidas al ampliar, sin clave API. Conserva el zoom del usuario durante el seguimiento GPS e incluye escala y pantalla completa. Si el dispositivo no puede cargar la vista vectorial, usa el mapa estandar con sobrezoom hasta nivel 21. Requiere conexion para cargar datos del mapa y conserva la atribucion de OpenFreeMap, OpenMapTiles y OpenStreetMap. Esta mejora visual no agrega datos de curvas al detector SST.

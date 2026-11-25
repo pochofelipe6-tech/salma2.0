@@ -1,4 +1,5 @@
-import {segmentNear} from '../../../lib/road-catalog';
+import {officialSchools,segmentNear} from '../../../lib/road-catalog';
+import {zoneAt} from '../../../lib/school-zones';
 import {validFix} from '../../../lib/road-matcher';
 import {NextRequest,NextResponse} from 'next/server';
 import {createClient} from '../../../lib/supabase/server';
@@ -173,8 +174,10 @@ try{
     if(!positiveId(b.trip)||typeof b.speed!=='number'||!Number.isFinite(b.speed)||b.speed>300||!validFix(b.fix)||Date.now()-Date.parse(b.fix.recorded_at)>60000||Date.parse(b.fix.recorded_at)>Date.now()+5000)return fail('Evento GPS inválido.');
     // El teléfono identifica el tramo; el servidor comprueba que esté junto a la posición y que haya exceso.
     const segment=typeof b.segment==='string'&&b.segment.length<=40?segmentNear(b.segment,b.fix):undefined;
-    if(!segment||b.speed<=zones[segment.zone])return fail('No hay un exceso confirmado en un tramo identificado.');
-    const {error}=await supabase.from('events').insert({trip_id:Number(b.trip),user_id:user.id,zone:segment.zone,sector:`${segment.name} · ${segment.place}`.slice(0,150),speed:b.speed,lat:b.fix.lat,lng:b.fix.lng});
+    // Junto a un colegio oficial el tramo es zona escolar, con la misma regla que aplica el teléfono.
+    const zone=segment&&zoneAt(segment,b.fix.lat,b.fix.lng,officialSchools());
+    if(!segment||!zone||b.speed<=zones[zone])return fail('No hay un exceso confirmado en un tramo identificado.');
+    const {error}=await supabase.from('events').insert({trip_id:Number(b.trip),user_id:user.id,zone,sector:`${segment.name} · ${segment.place}`.slice(0,150),speed:b.speed,lat:b.fix.lat,lng:b.fix.lng});
     if(error){
       if(['PGRST204','PGRST205','42703','42P01'].includes(error.code))return fail('Ejecuta las migraciones 006 y 007 en Supabase para guardar alertas automáticas.',503);
       if(['42501','23503','23514','P0001'].includes(error.code))return fail('No se puede registrar el evento: revisa que el viaje siga activo y que esté cargado el catálogo 007.');

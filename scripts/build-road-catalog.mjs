@@ -68,8 +68,19 @@ function placeName(point,urban){
 }
 
 // ---------- Colegios ----------
+// OSM: amenity=school/kindergarten del extracto y, si existe data/maps/atlantico-pois.json (npm run maps:pois),
+// también edificios escolares, guarderías y colegios etiquetados de otras formas.
+const optional=async file=>{try{return JSON.parse(await readFile(file,'utf8'))}catch{console.warn(`Sin ${file}: se omite.`);return null}};
+const poiData=await optional('data/maps/atlantico-pois.json');
+function asSchool(id,name,ring,point){
+  const polygon=ring&&ring.length>3?ring:null,points=polygon||[point];
+  return {name:clean(name||'')||'Colegio',polygon,point:polygon?null:point,bbox:bounds(points),center:[points.reduce((v,p)=>v+p[0],0)/points.length,points.reduce((v,p)=>v+p[1],0)/points.length],id};
+}
 const SCHOOL_CELL=.003,schoolGrid=new Map();
-const schools=raw.schools.map(s=>{const polygon=s.type!=='node'&&s.coordinates.length>3?s.coordinates:null,points=polygon||[s.coordinates];return {name:clean(s.tags?.name||'Colegio'),polygon,point:s.type==='node'?s.coordinates:null,bbox:bounds(points),center:[points.reduce((v,p)=>v+p[0],0)/points.length,points.reduce((v,p)=>v+p[1],0)/points.length],id:s.type+':'+s.id}});
+const schools=[
+  ...raw.schools.map(s=>asSchool(s.type+':'+s.id,s.tags?.name,s.type!=='node'?s.coordinates:null,s.type==='node'?s.coordinates:s.coordinates[0])),
+  ...(poiData?.pois||[]).filter(p=>p.kind==='colegio').map(p=>asSchool(p.id,p.name,p.ring,p.coordinates)),
+];
 for(const s of schools)for(let x=Math.floor((s.bbox[0]-.001)/SCHOOL_CELL);x<=Math.floor((s.bbox[2]+.001)/SCHOOL_CELL);x++)for(let y=Math.floor((s.bbox[1]-.001)/SCHOOL_CELL);y<=Math.floor((s.bbox[3]+.001)/SCHOOL_CELL);y++){const k=x+':'+y;if(!schoolGrid.has(k))schoolGrid.set(k,[]);schoolGrid.get(k).push(s)}
 function pointSegment(p,a,b){const cos=Math.cos(p[1]*Math.PI/180),ax=(a[0]-p[0])*M*cos,ay=(a[1]-p[1])*M,bx=(b[0]-p[0])*M*cos,by=(b[1]-p[1])*M,dx=bx-ax,dy=by-ay,t=Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy||1)));return Math.hypot(ax+t*dx,ay+t*dy)}
 // Zona escolar: hasta 50 m del predio del colegio o 80 m del punto que lo representa.
@@ -175,18 +186,49 @@ for(const s of segments){
   const b=bounds(s.geometry);
   for(let x=Math.floor((b[0]-PAD)/TILE);x<=Math.floor((b[2]+PAD)/TILE);x++)for(let y=Math.floor((b[1]-PAD)/TILE);y<=Math.floor((b[3]+PAD)/TILE);y++){const k=x+'_'+y;if(!tiles.has(k))tiles.set(k,[]);tiles.get(k).push(s)}
 }
+// Lugares para los íconos del mapa (OSM): uno por tipo cada 40 m, prefiriendo el que tiene nombre.
+// Fila de cuadrícula: [tipo (índice en PLACE_KINDS de lib/map-tiles.ts), nombre, x·1e5, y·1e5].
+const PLACE_KINDS=['colegio','universidad','iglesia','centro_comercial','salud','policia','bomberos','alcaldia','mercado','terminal','deporte'];
+const PLACE_NAME={colegio:'Colegio',universidad:'Universidad',iglesia:'Iglesia',centro_comercial:'Centro comercial',salud:'Centro de salud',policia:'Policía',bomberos:'Bomberos',alcaldia:'Alcaldía',mercado:'Mercado',terminal:'Terminal',deporte:'Escenario deportivo'};
+const places=[],placeTiles=new Map();
+for(const p of [...(poiData?.pois||[])].sort((a,b)=>(b.name?1:0)-(a.name?1:0))){
+  if(places.some(q=>q.kind===p.kind&&metres(q.c,p.coordinates)<40))continue;
+  const place={kind:p.kind,name:clean(p.name||'')||PLACE_NAME[p.kind],c:p.coordinates};places.push(place);
+  const k=Math.floor(place.c[0]/TILE)+'_'+Math.floor(place.c[1]/TILE);if(!placeTiles.has(k))placeTiles.set(k,[]);placeTiles.get(k).push(place);
+}
 const date=raw.metadata.downloadedAt;let bytes=0,largest=0;
-for(const [key,list] of tiles){
+const tileKeys=[...new Set([...tiles.keys(),...placeTiles.keys()])].sort();
+for(const key of tileKeys){
   const strings=[],index=new Map(),str=v=>{if(!index.has(v)){index.set(v,strings.length);strings.push(v)}return index.get(v)};
-  const rows=list.map(s=>{
+  const rows=(tiles.get(key)||[]).map(s=>{
     const flat=[];let px=0,py=0;
     for(const [x,y] of s.geometry){const ix=Math.round(x*1e5),iy=Math.round(y*1e5);flat.push(ix-px,iy-py);px=ix;py=iy}
     return [s.id,str(s.name),ZONES.indexOf(s.zone),str(s.label),str(s.place),str(s.kind),s.posted,s.oneway,flat];
   });
-  const body=JSON.stringify({v:2,date,s:strings,r:rows});bytes+=body.length;largest=Math.max(largest,body.length);
+  const placeRows=(placeTiles.get(key)||[]).map(p=>[PLACE_KINDS.indexOf(p.kind),str(p.name),Math.round(p.c[0]*1e5),Math.round(p.c[1]*1e5)]);
+  const body=JSON.stringify({v:2,date,s:strings,r:rows,...(placeRows.length?{p:placeRows}:{})});bytes+=body.length;largest=Math.max(largest,body.length);
   await writeFile(`public/map-tiles/${key}.json`,body);
 }
-await writeFile('public/map-tiles/index.json',JSON.stringify({v:2,date,size:TILE,tiles:[...tiles.keys()].sort()}));
-await writeFile('public/map-tiles/LICENSE.md',`# Datos geográficos de Atlántico\n\n© OpenStreetMap contributors. Base de datos derivada de OpenStreetMap, distribuida bajo Open Database License (ODbL) 1.0.\n\n- Atribución y licencia: https://www.openstreetmap.org/copyright\n- Extracto original: https://download.geofabrik.de/south-america/colombia.html\n- Preparación reproducible: \`scripts/extract-atlantico-map.mjs\` y \`scripts/build-road-catalog.mjs\`.\n\nLos límites son preventivos SST por categoría (nacional 70, urbana 50, curva 35, colegio 30). No constituyen un inventario oficial de señalización.\n`);
+await writeFile('public/map-tiles/index.json',JSON.stringify({v:2,date,size:TILE,tiles:tileKeys}));
+
+// ---------- Colegios oficiales (archivo aparte, CC BY-SA 4.0) ----------
+// Sedes del MEN y de la Gobernación ubicadas por dirección (npm run maps:schools). Se omiten las que OSM ya
+// tiene: un colegio a menos de 150 m, o uno con el mismo nombre a menos de 1,5 km (sede mal ubicada).
+// El teléfono y el servidor las cruzan con la vía en lib/school-zones.ts.
+const STOP=new Set(['INSTITUCION','EDUCATIVA','EDUCATIVO','COLEGIO','SEDE','IE','DE','LA','EL','LOS','LAS','DEL','CENTRO','DISTRITAL','TECNICA','TECNICO','NO','INST','EDUC','BASICA','PRIMARIA','ESCUELA','IED','PRINCIPAL','JARDIN','INFANTIL','PREESCOLAR']);
+const words=s=>new Set(String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!STOP.has(w)));
+function sameName(a,b){const A=words(a),B=words(b);if(!A.size||!B.size)return false;let n=0;for(const w of A)if(B.has(w))n++;return n/Math.min(A.size,B.size)>=.75}
+const SMALL=new Set(['de','del','la','las','el','los','y','e','en','a']);
+const titleCase=s=>clean(s).toLowerCase().split(' ').map((w,i)=>/^(i\.?e\.?d?|ie|ied|ieti|cdi|c\.?e\.?b?|ceb|ii|iii|iv|sena)$/.test(w)?w.toUpperCase():i&&SMALL.has(w)?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+const official=await optional('data/maps/atlantico-schools-official.json');
+let officialKept=0;
+if(official){
+  const kept=official.schools.filter(s=>!schools.some(o=>metres(o.center,s.coordinates)<150||(sameName(o.name,s.name)&&metres(o.center,s.coordinates)<1500)));
+  officialKept=kept.length;
+  await writeFile('public/map-tiles/colegios-oficiales.json',JSON.stringify({v:1,date:official.metadata.date,license:'CC BY-SA 4.0',
+    attribution:'Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA) y Gobernación del Atlántico, datos.gov.co. Ubicación aproximada por dirección sobre calles de OpenStreetMap.',
+    s:kept.map(s=>[titleCase(s.name),Math.round(s.coordinates[0]*1e6)/1e6,Math.round(s.coordinates[1]*1e6)/1e6])}));
+}
+await writeFile('public/map-tiles/LICENSE.md',`# Datos geográficos de Atlántico\n\n© OpenStreetMap contributors. Las cuadrículas (\`<x>_<y>.json\`, \`index.json\`) son una base de datos derivada de OpenStreetMap, distribuida bajo Open Database License (ODbL) 1.0: vías, zonas SST y lugares (colegios, iglesias, centros comerciales, salud, policía...).\n\n- Atribución y licencia: https://www.openstreetmap.org/copyright\n- Extracto original: https://download.geofabrik.de/south-america/colombia.html\n- Preparación reproducible: \`scripts/extract-atlantico-map.mjs\`, \`scripts/extract-atlantico-pois.mjs\` y \`scripts/build-road-catalog.mjs\`.\n\n\`colegios-oficiales.json\` es una base de datos aparte, bajo Creative Commons Atribución-CompartirIgual 4.0 (CC BY-SA 4.0): sedes educativas del Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA, https://www.datos.gov.co/d/x5ay-984n) y de la Gobernación del Atlántico (https://www.datos.gov.co/d/7tec-5fhs), ubicadas por dirección con \`scripts/geocode-schools.mjs\`. La ubicación es aproximada.\n\nLos límites son preventivos SST por categoría (nacional 70, urbana 50, curva 35, colegio 30). No constituyen un inventario oficial de señalización.\n`);
 const km=Object.fromEntries(Object.entries(stats.length).map(([k,v])=>[k+' ('+SPEED[k]+' km/h)',Math.round(v/1000)+' km']));
-console.log(JSON.stringify({vias:raw.roads.length,omitidas:skipped,tramos:segments.length,cuadriculas:tiles.size,megabytes:+(bytes/1e6).toFixed(1),mayorKB:Math.round(largest/1e3),longitudPorZona:km},null,2));
+console.log(JSON.stringify({vias:raw.roads.length,omitidas:skipped,tramos:segments.length,cuadriculas:tileKeys.length,megabytes:+(bytes/1e6).toFixed(1),mayorKB:Math.round(largest/1e3),longitudPorZona:km,colegiosOSM:schools.length,lugares:places.length,colegiosOficialesAparte:officialKept},null,2));

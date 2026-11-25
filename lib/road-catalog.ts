@@ -2,6 +2,7 @@ import {existsSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {decodeTile,tilesAround,type TileData} from './map-tiles';
 import {createSegmentIndex,distanceToRoad} from './road-matcher';
+import {createSchoolIndex,type OfficialSchools,type SchoolIndex} from './school-zones';
 import type {RoadFix,RoadSegment} from './road-types';
 
 // Las cuadrículas viven en public/map-tiles/ (el teléfono las descarga) y next.config las
@@ -15,6 +16,15 @@ function loadTile(key:string){
     tiles.set(key,segments);
   }
   return segments;
+}
+// Colegios oficiales (archivo aparte, CC BY-SA 4.0): se cargan una vez y se cruzan con el tramo.
+let schools:SchoolIndex|null=null;
+export function officialSchools(){
+  if(!schools){
+    const file=join(process.cwd(),'public','map-tiles','colegios-oficiales.json');
+    schools=createSchoolIndex(existsSync(file)?JSON.parse(readFileSync(file,'utf8')) as OfficialSchools:null);
+  }
+  return schools;
 }
 // Tramo informado por el teléfono, solo si está junto a la posición GPS.
 export function segmentNear(id:string,fix:RoadFix){
