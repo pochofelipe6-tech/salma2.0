@@ -3,6 +3,12 @@ import {useEffect,useRef,useState} from 'react';
 import {LocateFixed,MapPin,Maximize2,Minimize2,Box,Moon,Sun} from 'lucide-react';
 import type * as Leaflet from 'leaflet';
 import type {RoutePoint} from '../lib/route-types';
+import type {FeatureCollection} from 'geojson';
+import type {GeoJSONSource,Map as MapLibreMap} from 'maplibre-gl';
+import {createMapOverlay} from '../lib/map-overlay';
+import {addPlacesLayer,OFFICIAL_SCHOOLS_ATTRIBUTION} from '../lib/map-places';
+import {addExtraBuildings2D,styleStreetMap2D} from '../lib/map-3d-style';
+import {createBuildingTileLoader} from '../lib/building-tiles';
 import BuildingsMap,{ZONE_COLORS,type BuildingView,type BuildingControls,type MapTheme} from './buildings-map';
 import styles from './driver-screen.module.css';
 
@@ -21,6 +27,7 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
   const container=useRef<HTMLDivElement>(null),map=useRef<Leaflet.Map|null>(null),line=useRef<Leaflet.Polyline|null>(null),marker=useRef<Leaflet.Marker|null>(null),accuracy=useRef<Leaflet.Circle|null>(null),centered=useRef(false),frame=useRef<HTMLDivElement>(null);
   const latest=useRef({points,position});latest.current={points,position};
   const [ready,setReady]=useState(0),[follow,setFollow]=useState(true),[tilesError,setTilesError]=useState(false),[baseMap,setBaseMap]=useState<'loading'|'vector'|'standard'>('loading'),[expanded,setExpanded]=useState(false);
+  const [zonesShown,setZonesShown]=useState(false);
   const [buildingView,setBuildingView]=useState<BuildingView|null>(null),[buildingsError,setBuildingsError]=useState('');
   const buildingControls=useRef<BuildingControls|null>(null);
   function toggleBuildings(){
@@ -56,6 +63,42 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
         raster.on('tileerror',()=>{if(!disposed)setTilesError(true)});raster.on('load',()=>{if(!disposed)setTilesError(false)});
         setBaseMap('standard');
       };
+      // Mapa 2D más legible: edificios con sombra y contorno, vías por zona SST y lugares (colegios, iglesias...).
+      const decorate=(gl:MapLibreMap)=>{
+        try{
+          styleStreetMap2D(gl);
+          const empty:FeatureCollection={type:'FeatureCollection',features:[]},firstSymbol=gl.getStyle().layers.find(l=>l.type==='symbol')?.id;
+          gl.addSource('zonas',{type:'geojson',data:empty});
+          gl.addLayer({id:'zonas-2d',type:'line',source:'zonas',minzoom:12,paint:{'line-color':['match',['get','zone'],'nacional',ZONE_COLORS.nacional,'curvas',ZONE_COLORS.curvas,'escolar',ZONE_COLORS.escolar,ZONE_COLORS.urbana],'line-width':['interpolate',['linear'],['zoom'],12,1.2,15,2.6,18,5],'line-opacity':.85},layout:{'line-cap':'round','line-join':'round'}},firstSymbol);
+          gl.addSource('lugares',{type:'geojson',data:empty});
+          addPlacesLayer(gl,'lugares',false);
+          m.attributionControl?.addAttribution(OFFICIAL_SCHOOLS_ATTRIBUTION);
+          const overlay=createMapOverlay(data=>{
+            if(disposed)return;
+            (gl.getSource('zonas') as GeoJSONSource|undefined)?.setData(data.roads);
+            (gl.getSource('lugares') as GeoJSONSource|undefined)?.setData(data.places);
+            container.current?.setAttribute('data-places',String(data.places.features.length));
+          });
+          const refresh=()=>{const c=m.getCenter();void overlay(c.lat,c.lng)};
+          m.on('moveend',refresh);refresh();
+          // Edificios que OSM no tiene (huellas de Microsoft), alrededor de lo visible desde el zoom 14.
+          gl.addSource('edificios-extra',{type:'geojson',data:empty});
+          addExtraBuildings2D(gl,'edificios-extra');
+          const showExtra=()=>{
+            if(disposed)return;
+            const source=gl.getSource('edificios-extra') as GeoJSONSource|undefined;
+            if(m.getZoom()<14){source?.setData(empty);return}
+            const b=m.getBounds(),c=m.getCenter();
+            void extraLoader.ensure(c.lat,c.lng,Math.min(1500,c.distanceTo(b.getNorthEast())));
+            const list=extraLoader.within({west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth()});
+            source?.setData({type:'FeatureCollection',features:list.map(x=>({type:'Feature',properties:{height:x.height},geometry:{type:'Polygon',coordinates:[x.ring]}}))});
+            container.current?.setAttribute('data-extra-buildings',String(list.length));
+          };
+          const extraLoader=createBuildingTileLoader(showExtra);
+          m.on('moveend',showExtra);showExtra();
+          setZonesShown(true);
+        }catch{}
+      };
       // Sin WebGL el mapa vectorial falla a medias y deja la capa rota: se usa directamente el estándar.
       if(!supportsWebGL())fallback();
       else void Promise.all([import('@maplibre/maplibre-gl-leaflet'),import('maplibre-gl')]).then(([adapter,gl])=>{
@@ -66,7 +109,7 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
         // Solo pasa al mapa estándar si no carga el estilo; una cuadrícula o imagen que falle no cuenta.
         let styleLoaded=false;rendered.once('style.load',()=>{styleLoaded=true});
         timeout=setTimeout(()=>{if(!disposed&&!styleLoaded)fallback()},12000);
-        rendered.once('load',()=>{if(disposed||raster)return;clearTimeout(timeout);setTilesError(false);setBaseMap('vector');container.current?.setAttribute('data-basemap','vector');m.attributionControl?.addAttribution('<a href="https://openfreemap.org" target="_blank" rel="noreferrer">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>')});
+        rendered.once('load',()=>{if(disposed||raster)return;clearTimeout(timeout);setTilesError(false);setBaseMap('vector');container.current?.setAttribute('data-basemap','vector');m.attributionControl?.addAttribution('<a href="https://openfreemap.org" target="_blank" rel="noreferrer">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>');decorate(rendered)});
         rendered.on('error',()=>{if(!disposed&&!styleLoaded)fallback()});
       }).catch(fallback);
       L.control.zoom({position:'bottomright',zoomInTitle:'Acercar mapa',zoomOutTitle:'Alejar mapa'}).addTo(m);
@@ -112,6 +155,7 @@ export default function RouteMap({points,position,tracking,stale,zoneLabel,zoneI
     {!buildingView&&<span className={styles.mapProvider}>{baseMap==='vector'?'Mapa de calles':baseMap==='loading'?'Cargando mapa...':'Mapa estándar'}</span>}
     {!follow&&position&&<button className={styles.followAgain} onClick={()=>{setFollow(true);centerOnPosition()}}>Volver a mi ubicación</button>}
     {!position&&!points.length&&<div className={styles.mapIntro}><MapPin size={16}/><span>Inicia la ruta para activar tu ubicación.</span></div>}
+    {zonesShown&&!buildingView&&baseMap==='vector'&&(position||points.length>0)&&<ul className={styles.legend2d} aria-label="Colores de las zonas">{LEGEND.map(([zone,label])=><li key={zone}><i style={{background:ZONE_COLORS[zone]}}/>{label}</li>)}</ul>}
     {tilesError&&<div className={styles.mapWarning} role="status">No se pudo cargar el mapa base. Revisa tu conexión; el GPS puede seguir registrando el recorrido.</div>}
   </div>;
 }

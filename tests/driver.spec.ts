@@ -8,7 +8,9 @@ const ZONE_INDEX:Record<string,number>={urbana:0,nacional:1,curvas:2,escolar:3};
 // Cuadrícula de mapa en el formato de public/map-tiles (coordenadas en 1e-5 con deltas).
 function tileBody(roads:TestRoad[]){
   const strings:string[]=[],str=(value:string)=>{if(!strings.includes(value))strings.push(value);return strings.indexOf(value)};
-  return {v:2,date:'2026-11-20',s:strings,r:roads.map(r=>{let px=0,py=0;const flat=r.geometry.flatMap(([x,y])=>{const ix=Math.round(x*1e5),iy=Math.round(y*1e5),delta=[ix-px,iy-py];px=ix;py=iy;return delta});return [r.id,str(r.name),ZONE_INDEX[r.zone],str(r.label),str('Barrio de prueba, Ciudad'),str('secondary'),0,0,flat]})};
+  const body={v:2,date:'2026-11-20',s:strings,r:roads.map(r=>{let px=0,py=0;const flat=r.geometry.flatMap(([x,y])=>{const ix=Math.round(x*1e5),iy=Math.round(y*1e5),delta=[ix-px,iy-py];px=ix;py=iy;return delta});return [r.id,str(r.name),ZONE_INDEX[r.zone],str(r.label),str('Barrio de prueba, Ciudad'),str('secondary'),0,0,flat]})};
+  // Lugares de la cuadrícula: un colegio y una iglesia junto a la vía de prueba.
+  return {...body,p:[[0,str('Colegio de prueba OSM'),-7408000,465020],[2,str('Iglesia de prueba'),-7407950,465050]]};
 }
 // Vía de prueba que pasa por todas las posiciones GPS de los escenarios.
 const mainRoad=(zone:string,label:string):TestRoad=>({id:'34377021-0',name:'Carrera 51B',zone,label,geometry:[[-74.0805,4.6497],[-74.08,4.65],[-74.0795,4.6509],[-74.079,4.6515]]});
@@ -258,6 +260,7 @@ test('vista 3D usa el mapa de respaldo si OpenFreeMap no responde',async({page})
  await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
  const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});
  await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:30000});await expect(map3d).toHaveAttribute('data-basemap','standard');
+ await expect(map3d).not.toHaveAttribute('data-trees',/.*/);
  await expect(page.getByRole('status').filter({hasText:'No se pudo cargar la vista 3D'})).toHaveCount(0);
  await page.getByRole('button',{name:'Ver mapa en 2D',exact:true}).click();await expect(map3d).toHaveCount(0);
 });
@@ -337,4 +340,53 @@ test('en el navegador con el GPS apagado explica que hay que encenderlo',async({
  await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
  await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
  await expect(page.getByRole('alert').filter({hasText:'Enciende el GPS del celular'})).toBeVisible();expect(mock.starts).toBe(0);
+});
+
+test('vista 3D siembra arboles y separa las casas cercanas',async({page},testInfo)=>{
+ // Con la ruta iniciada el 3D abre sobre el GPS simulado (zona con edificios y parques).
+ await mockDriver(page);await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Finalizar ruta',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Ver mapa en 3D',exact:true}).click();
+ const map3d=page.getByRole('img',{name:'Mapa 3D del recorrido'});
+ await expect(map3d).toHaveAttribute('data-buildings','ready',{timeout:20000});await expect(map3d).toHaveAttribute('data-basemap','vector');
+ await expect.poll(async()=>Number(await map3d.getAttribute('data-trees')),{timeout:30000}).toBeGreaterThan(0);
+ await expect.poll(async()=>Number(await map3d.getAttribute('data-near-buildings')),{timeout:30000}).toBeGreaterThan(0);
+ await page.waitForTimeout(3000);await page.screenshot({path:testInfo.outputPath('arboles-3d.png')});
+});
+
+test('un colegio oficial junto a la via la vuelve zona escolar y alerta a 30',async({page})=>{
+ const mock=await mockDriver(page,{label:'Zona urbana',zone:'urbana'});
+ // Colegio oficial (archivo aparte) a ~20 m de la vía de prueba.
+ await page.route('**/map-tiles/colegios-oficiales.json',route=>route.fulfill({json:{v:1,date:'2026-11-25',license:'CC BY-SA 4.0',attribution:'prueba',s:[['Institución Educativa Oficial de Prueba',-74.0798,4.6505]]}}));
+ await page.goto('/');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ const warning=page.getByRole('alert').filter({hasText:'¡Exceso de velocidad!'});
+ // Lejos del colegio (≈330 m): zona urbana, 40 km/h no es exceso.
+ await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.6497,-74.0805,40/3.6));
+ await expect(page.getByRole('region',{name:'Vas por'})).toContainText('50');await expect(warning).toHaveCount(0);
+ // Frente al colegio: zona escolar 30 y alerta.
+ await expect.poll(async()=>{await page.evaluate(()=>(window as unknown as GPSWindow).sendGps(4.65036,-74.0798,40/3.6));return page.getByRole('region',{name:'Vas por'}).innerText()},{timeout:15000}).toContain('Zona escolar · Institución Educativa Oficial de Prueba');
+ await expect(warning).toBeVisible();await expect(warning).toContainText('Reduce la velocidad a 30 km/h');
+ await expect.poll(()=>mock.events.length).toBe(1);
+});
+
+test('el mapa 2D muestra colegios, iglesias y vias por zona',async({page})=>{
+ await mockDriver(page);
+ // Después de mockDriver: en Playwright gana la ruta registrada al final.
+ await page.route('**/map-tiles/colegios-oficiales.json',route=>route.fulfill({json:{v:1,date:'2026-11-25',license:'CC BY-SA 4.0',attribution:'prueba',s:[['Colegio Oficial de Prueba',-74.0795,4.6509]]}}));
+ await page.goto('/');
+ const map=page.getByRole('img',{name:'Mapa del recorrido GPS'});
+ await expect(map).toHaveAttribute('data-basemap','vector',{timeout:30000});
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ await page.getByLabel('Placa',{exact:true}).fill('ABC123');await page.getByLabel('Marca y modelo',{exact:true}).fill('Renault Duster');
+ await page.getByRole('button',{name:'Iniciar ruta',exact:true}).click();
+ // Colegio OSM, iglesia OSM y colegio oficial.
+ await expect.poll(async()=>Number(await map.getAttribute('data-places')),{timeout:20000}).toBe(3);
+ await expect(page.getByRole('list',{name:'Colores de las zonas'})).toBeVisible();
+ await expect(page.locator('.leaflet-control-attribution')).toContainText('Gobernación del Atlántico');
 });
