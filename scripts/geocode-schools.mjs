@@ -6,6 +6,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 // - MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA (x5ay-984n), Ministerio de Educación Nacional: todas las sedes.
 //   Sus coordenadas vienen redondeadas a 2 decimales (≈1 km): solo sirven para descartar ubicaciones absurdas.
 // - Listado de instituciones oficiales y no oficiales del Atlántico (7tec-5fhs), Gobernación del Atlántico.
+// - MEN_INSTITUCIONES EDUCACIÓN SUPERIOR (n5yy-8nav): universidades y corporaciones, solo para el mapa (sin zona escolar).
 // Salida: data/maps/atlantico-schools-official.json. Requiere npm run maps:extract.
 const SOURCES=[
   {id:'x5ay-984n',name:'MEN · Sedes educativas preescolar, básica y media',where:"upper(departamento) like '%ATL%NTICO%'",
@@ -40,7 +41,9 @@ for(const road of raw.roads){
   const g=strip(road.tags.name||'').match(/^(?:avenida\s+)?(calle|carrera|diagonal|transversal)\s+(\d{1,3})\s*([a-z]{0,2})\b/i);
   if(!g)continue;
   const muni=muniOf(road.coordinates[road.coordinates.length>>1]),kind=KIND[g[1].toLowerCase()];
-  for(const key of new Set([streetKey(kind,g[2],g[3]),streetKey(kind,g[2])])){
+  // «Carrera 3 Sur» es otra calle que la «Carrera 3»: su clave lleva SUR.
+  const sur=/\bsur\b/i.test(strip(road.tags.name||''))?'SUR':'';
+  for(const key of new Set([streetKey(kind,g[2],g[3]+sur),streetKey(kind,g[2],sur)])){
     const k=muni+'|'+key;if(!streets.has(k))streets.set(k,[]);streets.get(k).push(road.coordinates);
   }
 }
@@ -63,7 +66,8 @@ function crossing(a,b,near){
   found.sort((x,y)=>near?metres(x.point,near)-metres(y.point,near):x.distance-y.distance);
   return found[0].point;
 }
-const lookup=(muni,kind,number,letters)=>streets.get(`${muni}|${streetKey(kind,number,letters)}`)||(letters?streets.get(`${muni}|${streetKey(kind,number)}`):null);
+// Sin la letra se prueba la calle base, conservando SUR («Carrera 5B Sur» → «Carrera 5 Sur»).
+const lookup=(muni,kind,number,letters='')=>{const sur=letters.endsWith('SUR')?'SUR':'';return streets.get(`${muni}|${streetKey(kind,number,letters)}`)||(letters!==sur?streets.get(`${muni}|${streetKey(kind,number,sur)}`):null)};
 
 // ---------- Direcciones ----------
 const TYPE={CL:'calle',CLL:'calle',CALLE:'calle',DG:'calle',DIAG:'calle',DIAGONAL:'calle',KR:'carrera',KRA:'carrera',CRA:'carrera',CR:'carrera',CARRERA:'carrera',TV:'carrera',TR:'carrera',TRANSV:'carrera',TRANSVERSAL:'carrera',CRAS:'carrera',CALLES:'calle',CLLS:'calle'};
@@ -72,16 +76,35 @@ const NUM='(\\d{1,3})\\s?((?:[A-H](?![A-Z]))?)\\s?(?:BIS\\s?)?((?:[A-H](?![A-Z])
 // Formas reconocidas: «CL 15 15 82», «CL 16 C 51 A 04», «KR 50 CL 14» o «CALLE 18 CON CARRERA 3» (esquina), «CL 25 ENTRE CRAS 16 Y 17»,
 // «KR 15 21 ESQUINA»; se ignoran prefijos como «IND» y separadores «N.», «#», «-», «=».
 const TYPES=Object.keys(TYPE).join('|');
+// «CR 3SUR # 90-06»: la calle principal es la Carrera 3 Sur (se marca y se quita la palabra SUR).
 function parse(address){
-  const s=strip(address).toUpperCase().replace(/^IND\.?\s+/,'').replace(/N[°º]|\bNO?\.?(?=\s*\d)|#|-|=/g,' ').replace(/\s+/g,' ').trim();
+  let s=strip(address).toUpperCase().replace(/^IND\.?\s+/,'').replace(/N[°º¿]|\bNO?\.?(?=\s*\d)|#|-|=|,/g,' ').replace(/\s+/g,' ').trim(),sur='';
+  s=s.replace(new RegExp(`^((?:${TYPES})\\.?\\s?\\d{1,3}\\s?(?:[A-H](?![A-Z]))?)\\s?SUR\\b`),(all,head)=>{sur='SUR';return head});
+  const result=(m,i,metresValue,between=null)=>({kind:TYPE[m[1]],number:m[2],letters:m[3]+m[4]+sur,cross:m[i],crossLetters:m[i+1]+m[i+2],metres:metresValue,between});
   let m=s.match(new RegExp(`^(${TYPES})\\.?\\s?${NUM}\\s(?:ENTRE\\s|CON\\s)?(${TYPES})\\.?\\s?${NUM}(?:\\s?Y\\s?${NUM})?`));
-  if(m)return {kind:TYPE[m[1]],number:m[2],letters:m[3]+m[4],cross:m[6],crossLetters:m[7]+m[8],metres:m[9]?null:0,between:m[9]||null};
+  if(m)return result(m,6,m[9]?null:0,m[9]||null);
   m=s.match(new RegExp(`^(${TYPES})\\.?\\s?${NUM}\\s${NUM}\\s(\\d{1,3})\\b`));
   // Más de 150 m suele ser un error de digitación («8 872» por «8-72»): se usa como máximo 150 m.
-  if(m)return {kind:TYPE[m[1]],number:m[2],letters:m[3]+m[4],cross:m[5],crossLetters:m[6]+m[7],metres:Math.min(150,Number(m[8]))};
+  if(m)return result(m,5,Math.min(150,Number(m[8])));
   m=s.match(new RegExp(`^(${TYPES})\\.?\\s?${NUM}\\s${NUM}(?:\\s(?:ESQUINA|ESQ)\\b|$)`));
-  if(m)return {kind:TYPE[m[1]],number:m[2],letters:m[3]+m[4],cross:m[5],crossLetters:m[6]+m[7],metres:0};
+  if(m)return result(m,5,0);
   return null;
+}
+// Sin cruce exacto con la transversal (falta en el mapa o no se toca): posición estimada entre las transversales
+// vecinas que sí cruzan, p. ej. entre la Carrera 18 y la 20 para la 19. Solo en cuadrículas (cuadras ≤ 250 m).
+function interpolate(muni,a,along,approx){
+  const target=a.between?(Number(a.cross)+Number(a.between))/2:Number(a.cross)+(a.crossLetters?.3:0),corners=[];
+  for(let n=Math.floor(target)-3;n<=Math.ceil(target)+3;n++){
+    if(n<1||n===target)continue;
+    const lines=lookup(muni,other(a.kind),n,''),p=lines&&crossing(along,lines,approx);
+    if(p)corners.push({n,p});
+  }
+  const below=corners.filter(c=>c.n<target).sort((x,y)=>y.n-x.n)[0],above=corners.filter(c=>c.n>target).sort((x,y)=>x.n-y.n)[0];
+  if(!below||!above)return null;
+  const span=above.n-below.n,length=metres(below.p,above.p);
+  if(length<20||length/span>250)return null;
+  const block=length/span,t=(target+Math.min(a.metres||0,block)/block-below.n)/span;
+  return nearestOn(along,[below.p[0]+(above.p[0]-below.p[0])*t,below.p[1]+(above.p[1]-below.p[1])*t]).point;
 }
 function geocode(row){
   const muni=norm(row.municipality),a=parse(row.address||'');
@@ -90,9 +113,13 @@ function geocode(row){
   if(!along)return {reason:'calle no está en el mapa'};
   const approx=row.approx&&Number.isFinite(row.approx[0])&&row.approx[0]<-74&&row.approx[1]>10?row.approx:null;
   const crossLines=lookup(muni,other(a.kind),a.cross,a.crossLetters);
-  if(!crossLines)return {reason:'calle transversal no está en el mapa'};
-  const corner=crossing(along,crossLines,approx);
-  if(!corner)return {reason:'las calles no se cruzan'};
+  const corner=crossLines&&crossing(along,crossLines,approx);
+  if(!corner){
+    const estimate=interpolate(muni,a,along,approx);
+    if(!estimate)return {reason:crossLines?'las calles no se cruzan':'calle transversal no está en el mapa'};
+    if(approx&&metres(estimate,approx)>1500)return {reason:'lejos de la coordenada del MEN'};
+    return {point:estimate,precision:'interpolada'};
+  }
   let point=corner,precision='esquina';
   // Avanzar los metros indicados hacia la siguiente calle transversal (o alejarse de la anterior).
   const metresAlong=a.between?Math.min(60,metres(corner,crossing(along,lookup(muni,other(a.kind),a.between,'')||[],approx)||corner)/2):a.metres;
@@ -112,10 +139,10 @@ function geocode(row){
 }
 
 // ---------- Resultado ----------
-const located=[],failed={},unread=[];
+const located=[],failed={},unread=[],unlocated=[];
 for(const row of rows){
   const g=geocode(row);
-  if(!g.point){failed[g.reason]=(failed[g.reason]||0)+1;if(g.reason==='dirección no reconocida')unread.push(row.address);continue}
+  if(!g.point){failed[g.reason]=(failed[g.reason]||0)+1;if(g.reason==='dirección no reconocida')unread.push(row.address);unlocated.push({name:row.name,municipality:row.municipality,address:row.address,reason:g.reason,source:row.source});continue}
   located.push({name:String(row.name||'Colegio').trim(),municipality:row.municipality,address:row.address,source:row.source,code:row.code,precision:g.precision,coordinates:g.point.map(v=>Math.round(v*1e6)/1e6)});
 }
 // Una sede puede venir en las dos fuentes: se unen las ubicadas a menos de 40 m.
@@ -124,5 +151,16 @@ for(const s of located)if(!unique.some(u=>metres(u.coordinates,s.coordinates)<40
 const byMuni=unique.reduce((o,s)=>{const k=s.municipality.toUpperCase();o[k]=(o[k]||0)+1;return o},{});
 const report={date:new Date().toISOString().slice(0,10),sources:SOURCES.map(s=>({id:s.id,name:s.name,url:`https://www.datos.gov.co/d/${s.id}`,license:'CC BY-SA 4.0'})),
   registros:rows.length,ubicados:located.length,ejemplosNoReconocidos:unread.slice(0,25),unicos:unique.length,porPrecision:unique.reduce((o,s)=>({...o,[s.precision]:(o[s.precision]||0)+1}),{}),sinUbicar:failed,porMunicipio:byMuni};
-await writeFile('data/maps/atlantico-schools-official.json',JSON.stringify({metadata:report,schools:unique}));
+// Educación superior (MEN_INSTITUCIONES EDUCACIÓN SUPERIOR, n5yy-8nav, CC BY-SA 4.0): solo para el mapa, sin zona escolar.
+const HIGHER={id:'n5yy-8nav',name:'MEN · Instituciones de educación superior',where:"upper(departamento_domicilio) like '%ATL%NTICO%'"};
+const higherRows=await (await fetch(`https://www.datos.gov.co/resource/${HIGHER.id}.json?$limit=5000&$where=${encodeURIComponent(HIGHER.where)}`)).json();
+const universities=[];
+for(const r of Array.isArray(higherRows)?higherRows:[]){
+  if(!/activa/i.test(r.estado||''))continue;
+  const g=geocode({municipality:r.municipio_domicilio,address:r.direcci_n_domicilio,approx:null});
+  if(g.point)universities.push({name:String(r.nombre_instituci_n||'').trim(),municipality:r.municipio_domicilio,address:r.direcci_n_domicilio,precision:g.precision,coordinates:g.point.map(v=>Math.round(v*1e6)/1e6)});
+}
+report.sources.push({id:HIGHER.id,name:HIGHER.name,url:`https://www.datos.gov.co/d/${HIGHER.id}`,license:'CC BY-SA 4.0'});
+report.educacionSuperior={registros:Array.isArray(higherRows)?higherRows.length:0,ubicadas:universities.length};
+await writeFile('data/maps/atlantico-schools-official.json',JSON.stringify({metadata:report,schools:unique,unlocated,universities}));
 console.log(JSON.stringify(report,null,2));

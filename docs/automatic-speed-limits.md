@@ -8,7 +8,7 @@ La app reconoce en el teléfono la vía por la que va el conductor, le dice dón
 |---|---|---|
 | Vía nacional fuera de cascos urbanos | 70 km/h | Troncales y autopistas, rutas 25 y 90 (y variantes) y vías con nombre de corredor nacional: La Cordialidad, Vía Oriental, Circunvalar de la Prosperidad, Vía al Mar, Troncal de Occidente, etc. |
 | Vía urbana en ciudad o pueblo | 50 km/h | Perímetro urbano de Barranquilla, barrios, centros poblados y usos residenciales/comerciales de OSM, más densidad de calles locales (pueblos sin polígonos). Una vía nacional que atraviesa un pueblo pasa a 50. |
-| Colegio | 30 km/h | Hasta 50 m del predio u 80 m del punto de los 1.041 colegios de OpenStreetMap (colegios, jardines, guarderías y edificios escolares), y hasta 80 m de las 504 sedes oficiales que OSM no tiene (ver «Colegios oficiales»). No se aplica en autopistas fuera del casco urbano ni en puentes. Con esto hay zona escolar en 22 de los 25 municipios. |
+| Colegio | 30 km/h | Hasta 50 m del predio u 80 m del punto de los 1.039 colegios de OpenStreetMap (colegios, jardines, guarderías y edificios escolares), y hasta 80 m de las 651 sedes oficiales que OSM no tiene (ver «Colegios oficiales»). No se aplica en autopistas fuera del casco urbano ni en puentes. Con esto hay zona escolar en 22 de los 25 municipios. |
 | Curva | 35 km/h | Radio de giro calculado con la geometría: menos de 110 m en vías nacionales y 90 m en las demás, con giro total de 30° o más. Incluye 25 m de aproximación. Glorietas y rampas incluidas. |
 | Zona residencial (`living_street`) | 30 km/h | Etiqueta de OSM. |
 | Vía rural menor | 50 km/h | Caminos sin clasificar fuera de cascos urbanos. |
@@ -28,13 +28,15 @@ Las calles residenciales dentro de ciudades y pueblos son vía urbana (50). Si O
 
 ## Colegios oficiales
 
-OpenStreetMap tenía colegios en solo 13 municipios (249 de 393 en Barranquilla). Para el resto del departamento se usan las sedes oficiales de datos.gov.co (licencia CC BY-SA 4.0): [MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA](https://www.datos.gov.co/d/x5ay-984n) del Ministerio de Educación (1.240 sedes del Atlántico) y el [listado de instituciones de la Gobernación del Atlántico](https://www.datos.gov.co/d/7tec-5fhs). Sus coordenadas vienen redondeadas a ≈1 km, así que `npm run maps:schools` ubica cada sede por su dirección: «CL 15 15 82» es la Calle 15 a 82 m de la Carrera 15, hacia la Carrera 16, usando las calles numeradas del extracto OSM de cada municipio. Ubica 878 sedes únicas; frente a los colegios que OSM sí tiene, la mediana del error es 17 m y el 80 % queda a 150 m o menos del predio. Las rurales sin dirección («VEREDA…») no se pueden ubicar.
+OpenStreetMap tenía colegios en solo 13 municipios (249 de 393 en Barranquilla). Para el resto del departamento se usan las sedes oficiales de datos.gov.co (licencia CC BY-SA 4.0): [MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA](https://www.datos.gov.co/d/x5ay-984n) del Ministerio de Educación (1.240 sedes del Atlántico) y el [listado de instituciones de la Gobernación del Atlántico](https://www.datos.gov.co/d/7tec-5fhs). Sus coordenadas vienen redondeadas a ≈1 km, así que `npm run maps:schools` ubica cada sede por su dirección: «CL 15 15 82» es la Calle 15 a 82 m de la Carrera 15, hacia la Carrera 16, usando las calles numeradas del extracto OSM de cada municipio. Reconoce las calles «Sur» de Barranquilla («CR 3SUR # 90-06» es la Carrera 3 Sur) y, si la transversal no está en el mapa o no se toca con la calle, estima la posición entre las transversales vecinas (entre la Carrera 18 y la 20 para la 19). Ubica 936 sedes únicas (53 por estimación); frente a los colegios que OSM sí tiene, la mediana del error es 17 m y el 80 % queda a 150 m o menos del predio. Las rurales sin dirección («VEREDA…») y las de dirección sin número («CL 30 AU AEROPUERTO») no se pueden ubicar.
 
-Por licencia, las sedes oficiales no se mezclan con las cuadrículas (ODbL): quedan aparte en `public/map-tiles/colegios-oficiales.json` (solo las 504 que OSM no tiene) y `lib/school-zones.ts` las cruza al momento con la vía reconocida, igual en el teléfono y en el servidor.
+También ubica las universidades y corporaciones del [listado de educación superior del MEN](https://www.datos.gov.co/d/n5yy-8nav) (13 de 18 con sede en el Atlántico). Solo se muestran como íconos: no generan zona escolar.
+
+Por licencia, las sedes oficiales no se mezclan con las cuadrículas (ODbL): quedan aparte en `public/map-tiles/colegios-oficiales.json` (651 colegios en `s` y 7 universidades en `u`, solo los que OSM no tiene: se descarta una sede si OSM tiene el mismo nombre a menos de 1,5 km o un colegio a menos de 40 m) y `lib/school-zones.ts` las cruza al momento con la vía reconocida, igual en el teléfono y en el servidor.
 
 ## Lugares y edificios
 
-- `npm run maps:pois` extrae de OSM 1.827 lugares del Atlántico (colegios, universidades, iglesias, centros comerciales, salud, policía, bomberos, alcaldías, mercados, terminales y escenarios deportivos). Van en las cuadrículas (campo `p`) y los mapas 2D y 3D los muestran con ícono y nombre; los colegios oficiales también.
+- `npm run maps:pois` extrae de OSM 1.677 lugares del Atlántico (colegios, universidades y corporaciones reconocidas también por su nombre, sin los edificios internos de los campus, iglesias, centros comerciales, salud, policía, bomberos, alcaldías, mercados, terminales y escenarios deportivos). Van en las cuadrículas (campo `p`) y los mapas 2D y 3D los muestran con ícono y nombre; los colegios oficiales también.
 - `npm run maps:buildings` completa los edificios que OSM no tiene con las huellas de Microsoft Global ML Building Footprints (ODbL): 128.354 edificios en `public/building-tiles/` (5 MB), sobre todo en los pueblos (Sabanalarga +20.488, Baranoa +10.625, Palmar de Varela +7.262). Se descartan las que se cruzan con un edificio de OSM. Las huellas se descargan de https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv (Colombia, quadkeys 032230100–032230103) a `data/maps/ms-buildings/`.
 
 ## Mapa 2D
@@ -61,7 +63,7 @@ Fuente: https://download.geofabrik.de/south-america/colombia.html. Polígono dep
 3. Obtener `data/maps/atlantico-boundary.json` desde https://nominatim.openstreetmap.org/search?state=Atl%C3%A1ntico&country=Colombia&format=jsonv2&polygon_geojson=1&limit=1
 4. `npm run maps:extract`: dos pasadas sobre el PBF (≈45 s). Extrae vías, colegios, barrios, centros poblados, municipios, localidades, perímetro urbano y usos del suelo. El resumen queda en `docs/atlantico-map-coverage.json`.
 5. `npm run maps:pois`: lugares del Atlántico (≈75 s).
-6. `npm run maps:schools`: descarga las sedes oficiales de datos.gov.co y las ubica por dirección (≈30 s).
+6. `npm run maps:schools`: descarga las sedes oficiales y las instituciones de educación superior de datos.gov.co y las ubica por dirección (≈30 s).
 7. `npm run maps:build`: genera `public/map-tiles/` (cuadrículas con vías, zonas y lugares, y `colegios-oficiales.json`) (≈15 s).
 8. `npm run maps:buildings`: edificios complementarios en `public/building-tiles/` (≈3 min; requiere las huellas de Microsoft en `data/maps/ms-buildings/`).
 9. `npm run test:maps` y desplegar.

@@ -21,14 +21,21 @@ const inBox=(x,y)=>y>=south&&y<=north&&x>=west&&x<=east;
 // Nombres que indican colegio cuando falta la etiqueta, y los que no son colegios de niños.
 const SCHOOL_NAME=/\b(colegio|instituci[oó]n educativa|escuela|liceo|jard[ií]n infantil|centro educativo|concentraci[oó]n escolar|normal superior|preescolar)\b/i;
 const NOT_A_SCHOOL=/\b(naval|polic[ií]a|militar|cadetes|suboficiales|universi|sena|tecnol[oó]gic|corporaci[oó]n|conducci[oó]n|antigu[oa]|f[uú]tbol|deportiva|idiomas|m[uú]sica|baile|danza)\b/i;
+// Educación superior por nombre (aunque falte la etiqueta): universidades, corporaciones, fundaciones e instituciones
+// universitarias, politécnicos, tecnológicos y el SENA.
+const HIGHER_ED=/\b(universidad|universitari[ao]|corporaci[oó]n (universitaria|tecnol[oó]gica|educativa)|fundaci[oó]n universitaria|instituci[oó]n universitaria|polit[eé]cnico|tecnol[oó]gico|escuela superior|sena|itsa|unad|uniminuto|unicorsalud)\b/i;
+const CAMPUS_PART=/^(bloque|edificio|comedor|ba[nñ]os|parqueadero|cafeter|auditorio|laboratorio|aula|torre|coliseo|biblioteca|porter[ií]a|teatro|polideportivo|gimnasio|piscina|cancha|estadio|museo|bellas artes)\b/i;
 export function classify(t){
   const name=t.name||'';
   if(t.disused||t['disused:amenity']||t.abandoned)return null;
+  const higher=HIGHER_ED.test(name);
   const school=['school','kindergarten','childcare'].includes(t.amenity)||['school','kindergarten'].includes(t.building)||t.landuse==='education'
-    ||(t.amenity==='college'&&!/universi|tecnol[oó]gic|sena\b|corporaci[oó]n/i.test(name))
-    ||(name&&SCHOOL_NAME.test(name)&&!t.highway&&!t.amenity&&!t.shop);
-  if(school)return NOT_A_SCHOOL.test(name)?null:'colegio';
-  if(['university','college'].includes(t.amenity)||t.building==='university')return 'universidad';
+    ||(t.amenity==='college'&&!higher)
+    ||(name&&SCHOOL_NAME.test(name)&&!higher&&!t.highway&&!t.amenity&&!t.shop);
+  if(school)return higher?'universidad':NOT_A_SCHOOL.test(name)?null:'colegio';
+  // Edificios internos de un campus («Bloque I2», «Comedor - Baños»): no son una institución aparte.
+  const campusPart=(CAMPUS_PART.test(name)&&t.amenity!=='university')||(['university','college'].includes(t.building)&&!t.amenity&&(!name||!higher));
+  if(!campusPart&&(['university','college'].includes(t.amenity)||['university','college'].includes(t.building)||(higher&&!t.highway&&!t.shop)))return 'universidad';
   if(t.amenity==='place_of_worship'||['church','cathedral','chapel'].includes(t.building))return 'iglesia';
   if(t.shop==='mall'||/^(c\.?\s?c\.?\s|centro comercial)/i.test(name))return 'centro_comercial';
   if(['hospital','clinic'].includes(t.amenity)||t.healthcare==='hospital'||t.building==='hospital')return 'salud';

@@ -120,4 +120,7 @@ assert.equal(createSchoolIndex({v:2,s:'dañado'}).near(10.65,-74.9),null,'Un arc
 const officialFile=JSON.parse(readFileSync('public/map-tiles/colegios-oficiales.json','utf8'));
 assert.ok(officialFile.s.length>300&&officialFile.license==='CC BY-SA 4.0');
 assert.ok(officialFile.s.every(([name,lng,lat])=>name&&lng>-75.4&&lng<-74.6&&lat>10.2&&lat<11.2));
-console.log('PASS: zona escolar por colegios oficiales ('+officialFile.s.length+' sedes en archivo aparte).');
+// Universidades y corporaciones (campo u): solo íconos, nunca zona escolar.
+assert.equal(createSchoolIndex({v:1,date:'x',license:'x',attribution:'x',s:[],u:[['Universidad de Prueba',-74.9,10.65]]}).near(10.65,-74.9),null,'Una universidad no genera zona escolar.');
+assert.ok(Array.isArray(officialFile.u)&&officialFile.u.length>0);
+console.log('PASS: zona escolar por colegios oficiales ('+officialFile.s.length+' sedes en archivo aparte; '+officialFile.u.length+' universidades solo en el mapa).');

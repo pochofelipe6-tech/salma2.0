@@ -5,7 +5,8 @@ import type {RoadMatch,RoadSegment} from './road-types';
 // ubicados por dirección con scripts/geocode-schools.mjs. Van en un archivo aparte de las vías (OpenStreetMap,
 // ODbL), public/map-tiles/colegios-oficiales.json, y se cruzan al momento con la vía reconocida: a 80 m o menos
 // de un colegio la vía es zona escolar (30 km/h). El teléfono y el servidor aplican la misma regla.
-export type OfficialSchools={v:1;date:string;license:string;attribution:string;s:[name:string,lng:number,lat:number][]};
+// s: colegios (generan zona escolar); u: universidades y corporaciones (solo íconos del mapa).
+export type OfficialSchools={v:1;date:string;license:string;attribution:string;s:[name:string,lng:number,lat:number][];u?:[name:string,lng:number,lat:number][]};
 export type SchoolIndex={near:(lat:number,lng:number)=>{name:string;distance:number}|null};
 export const SCHOOL_RADIUS_M=80;
 const CELL=.002,M=111195;

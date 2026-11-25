@@ -213,7 +213,8 @@ await writeFile('public/map-tiles/index.json',JSON.stringify({v:2,date,size:TILE
 
 // ---------- Colegios oficiales (archivo aparte, CC BY-SA 4.0) ----------
 // Sedes del MEN y de la Gobernación ubicadas por dirección (npm run maps:schools). Se omiten las que OSM ya
-// tiene: un colegio a menos de 150 m, o uno con el mismo nombre a menos de 1,5 km (sede mal ubicada).
+// tiene: el mismo nombre a menos de 1,5 km (sede mal ubicada) o un colegio a menos de 40 m (el mismo predio).
+// Colegios distintos cercanos se conservan: cada uno con su ícono en el mapa.
 // El teléfono y el servidor las cruzan con la vía en lib/school-zones.ts.
 const STOP=new Set(['INSTITUCION','EDUCATIVA','EDUCATIVO','COLEGIO','SEDE','IE','DE','LA','EL','LOS','LAS','DEL','CENTRO','DISTRITAL','TECNICA','TECNICO','NO','INST','EDUC','BASICA','PRIMARIA','ESCUELA','IED','PRINCIPAL','JARDIN','INFANTIL','PREESCOLAR']);
 const words=s=>new Set(String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!STOP.has(w)));
@@ -221,14 +222,19 @@ function sameName(a,b){const A=words(a),B=words(b);if(!A.size||!B.size)return fa
 const SMALL=new Set(['de','del','la','las','el','los','y','e','en','a']);
 const titleCase=s=>clean(s).toLowerCase().split(' ').map((w,i)=>/^(i\.?e\.?d?|ie|ied|ieti|cdi|c\.?e\.?b?|ceb|ii|iii|iv|sena)$/.test(w)?w.toUpperCase():i&&SMALL.has(w)?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
 const official=await optional('data/maps/atlantico-schools-official.json');
-let officialKept=0;
+let officialKept=0,officialUniversities=0;
 if(official){
-  const kept=official.schools.filter(s=>!schools.some(o=>metres(o.center,s.coordinates)<150||(sameName(o.name,s.name)&&metres(o.center,s.coordinates)<1500)));
+  const kept=official.schools.filter(s=>!schools.some(o=>metres(o.center,s.coordinates)<40||(sameName(o.name,s.name)&&metres(o.center,s.coordinates)<1500)));
   officialKept=kept.length;
+  // Universidades y corporaciones (educación superior del MEN): solo íconos del mapa, sin zona escolar (campo u).
+  const universities=places.filter(p=>p.kind==='universidad');
+  const keptHigher=(official.universities||[]).filter(u=>!universities.some(o=>metres(o.c,u.coordinates)<40||(sameName(o.name,u.name)&&metres(o.c,u.coordinates)<3000)));
+  officialUniversities=keptHigher.length;
+  const point=c=>[Math.round(c[0]*1e6)/1e6,Math.round(c[1]*1e6)/1e6];
   await writeFile('public/map-tiles/colegios-oficiales.json',JSON.stringify({v:1,date:official.metadata.date,license:'CC BY-SA 4.0',
-    attribution:'Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA) y Gobernación del Atlántico, datos.gov.co. Ubicación aproximada por dirección sobre calles de OpenStreetMap.',
-    s:kept.map(s=>[titleCase(s.name),Math.round(s.coordinates[0]*1e6)/1e6,Math.round(s.coordinates[1]*1e6)/1e6])}));
+    attribution:'Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA y MEN_INSTITUCIONES EDUCACIÓN SUPERIOR) y Gobernación del Atlántico, datos.gov.co. Ubicación aproximada por dirección sobre calles de OpenStreetMap.',
+    s:kept.map(s=>[titleCase(s.name),...point(s.coordinates)]),u:keptHigher.map(u=>[titleCase(u.name),...point(u.coordinates)])}));
 }
-await writeFile('public/map-tiles/LICENSE.md',`# Datos geográficos de Atlántico\n\n© OpenStreetMap contributors. Las cuadrículas (\`<x>_<y>.json\`, \`index.json\`) son una base de datos derivada de OpenStreetMap, distribuida bajo Open Database License (ODbL) 1.0: vías, zonas SST y lugares (colegios, iglesias, centros comerciales, salud, policía...).\n\n- Atribución y licencia: https://www.openstreetmap.org/copyright\n- Extracto original: https://download.geofabrik.de/south-america/colombia.html\n- Preparación reproducible: \`scripts/extract-atlantico-map.mjs\`, \`scripts/extract-atlantico-pois.mjs\` y \`scripts/build-road-catalog.mjs\`.\n\n\`colegios-oficiales.json\` es una base de datos aparte, bajo Creative Commons Atribución-CompartirIgual 4.0 (CC BY-SA 4.0): sedes educativas del Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA, https://www.datos.gov.co/d/x5ay-984n) y de la Gobernación del Atlántico (https://www.datos.gov.co/d/7tec-5fhs), ubicadas por dirección con \`scripts/geocode-schools.mjs\`. La ubicación es aproximada.\n\nLos límites son preventivos SST por categoría (nacional 70, urbana 50, curva 35, colegio 30). No constituyen un inventario oficial de señalización.\n`);
+await writeFile('public/map-tiles/LICENSE.md',`# Datos geográficos de Atlántico\n\n© OpenStreetMap contributors. Las cuadrículas (\`<x>_<y>.json\`, \`index.json\`) son una base de datos derivada de OpenStreetMap, distribuida bajo Open Database License (ODbL) 1.0: vías, zonas SST y lugares (colegios, iglesias, centros comerciales, salud, policía...).\n\n- Atribución y licencia: https://www.openstreetmap.org/copyright\n- Extracto original: https://download.geofabrik.de/south-america/colombia.html\n- Preparación reproducible: \`scripts/extract-atlantico-map.mjs\`, \`scripts/extract-atlantico-pois.mjs\` y \`scripts/build-road-catalog.mjs\`.\n\n\`colegios-oficiales.json\` es una base de datos aparte, bajo Creative Commons Atribución-CompartirIgual 4.0 (CC BY-SA 4.0): sedes educativas del Ministerio de Educación Nacional (MEN_SEDES_EDUCATIVAS_PREESCOLAR_BÁSICA_Y_MEDIA, https://www.datos.gov.co/d/x5ay-984n) de la Gobernación del Atlántico (https://www.datos.gov.co/d/7tec-5fhs) e instituciones de educación superior del MEN (MEN_INSTITUCIONES EDUCACIÓN SUPERIOR, https://www.datos.gov.co/d/n5yy-8nav; campo \`u\`, solo íconos), ubicadas por dirección con \`scripts/geocode-schools.mjs\`. La ubicación es aproximada.\n\nLos límites son preventivos SST por categoría (nacional 70, urbana 50, curva 35, colegio 30). No constituyen un inventario oficial de señalización.\n`);
 const km=Object.fromEntries(Object.entries(stats.length).map(([k,v])=>[k+' ('+SPEED[k]+' km/h)',Math.round(v/1000)+' km']));
-console.log(JSON.stringify({vias:raw.roads.length,omitidas:skipped,tramos:segments.length,cuadriculas:tileKeys.length,megabytes:+(bytes/1e6).toFixed(1),mayorKB:Math.round(largest/1e3),longitudPorZona:km,colegiosOSM:schools.length,lugares:places.length,colegiosOficialesAparte:officialKept},null,2));
+console.log(JSON.stringify({vias:raw.roads.length,omitidas:skipped,tramos:segments.length,cuadriculas:tileKeys.length,megabytes:+(bytes/1e6).toFixed(1),mayorKB:Math.round(largest/1e3),longitudPorZona:km,colegiosOSM:schools.length,lugares:places.length,colegiosOficialesAparte:officialKept,universidadesOficialesAparte:officialUniversities},null,2));

@@ -44,6 +44,7 @@ export function createMapOverlay(onData:(data:OverlayData)=>void,radius=2200,bas
     official??=json(base+'colegios-oficiales.json').then((d:OfficialSchools)=>{
       schools=createSchoolIndex(d);
       for(const [name,slng,slat] of Array.isArray(d?.s)?d.s:[])if(typeof name==='string'&&Number.isFinite(slng)&&Number.isFinite(slat))addPlace('colegio',name,slng,slat,true);
+      for(const [name,slng,slat] of Array.isArray(d?.u)?d.u:[])if(typeof name==='string'&&Number.isFinite(slng)&&Number.isFinite(slat))addPlace('universidad',name,slng,slat,true);
       return true;
     }).catch(()=>{official=null;return false});
     const [keys,officialReady]=await Promise.all([catalog,official]);
